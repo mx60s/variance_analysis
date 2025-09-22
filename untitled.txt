@@ -1,0 +1,1349 @@
+# the other pipeline's rate map generator, which works:
+
+import argparse
+import os
+import numpy as np
+from scipy.io import loadmat
+import pandas as pd
+from scipy.io.matlab._mio5_params import mat_struct
+import time
+from tqdm import tqdm
+from pathlib import Path
+
+current_file_path = Path().resolve()
+
+def get_rate_maps_cv(spike_times, positions, excit_list, 
+                     n_x_bins=17, n_y_bins=17, n_hd_bins=17, 
+                     velocity_threshold=2, velocity_data=None,
+                     cv_count=4):
+    """
+    Compute cross-validation rate maps for head direction (HD) and spatial position (X, Y).
+    
+    Creates train/test splits using cross-validation for rate maps binned by:
+    - Spatial position (X, Y)
+    - Head direction (HD)
+    
+    Returns:
+        global_train_maps: List of train rate maps (n_x_bins, n_y_bins, n_hd_bins, n_neurons)
+        global_test_maps: List of test rate maps (n_x_bins, n_y_bins, n_hd_bins, n_neurons)
+        folded_train_maps: List of folded train rate maps (n_x_bins, n_y_bins, n_hd_bins, 2, n_neurons)
+        folded_test_maps: List of folded test rate maps (n_x_bins, n_y_bins, n_hd_bins, 2, n_neurons)
+        cv_masks: List of CV masks for each split
+    """
+    seed = 111
+    np.random.seed(seed)
+    
+    tau = 0.120  # ~8Hz sampling rate
+    
+    # Extract x, y, and head direction
+    x = positions[:, 1]
+    y = positions[:, 2]
+    hd = positions[:, 3]
+    hd = (hd + 360) % 360  # Normalize to [0, 360)
+
+    x_min, x_max = np.min(x), np.max(x)
+    y_min, y_max = np.min(y), np.max(y)
+    hd_max = np.max(hd)
+
+    start_time = time.time()
+    print(f"Processing {len(excit_list)} excitatory neurons...")
+
+    # Create time bins
+    base_time = np.arange(spike_times[0, 0], spike_times[-1, 0] + tau, tau)
+
+    # Separate spike data by excitatory neurons
+    neuron_idxs = set(spike_times[:, 1])
+    spike_mat = []
+    for i in tqdm(neuron_idxs, desc="Processing neurons"):
+        if int(i) in excit_list:
+            spike_mat.append(spike_times[spike_times[:, 1] == i])
+    
+    n_neurons = len(spike_mat)
+    print(f"Number of neurons: {n_neurons}")
+
+    # Compute firing rate for each time bin and neuron
+    freq_maps = np.empty((len(base_time) - 1, 2, n_neurons))
+    
+    for idx, i in enumerate(tqdm(range(n_neurons), desc="Computing firing rates")):
+        current_spikes = spike_mat[idx]
+        current_map = np.empty((len(base_time) - 1, 2))
+        current_map[:, 0] = base_time[:-1]
+        
+        for j in range(len(base_time) - 1):
+            spike_count = np.sum((current_spikes[:, 0] > base_time[j]) & 
+                               (current_spikes[:, 0] <= base_time[j + 1]))
+            current_map[j, 1] = spike_count / tau
+        
+        freq_maps[:, 1, idx] = current_map[:, 1]
+    
+    print("Finished computing firing rate maps.")
+
+    # Apply velocity threshold if velocity data provided
+    if velocity_data is not None:
+        print(f"Applying velocity threshold: {velocity_threshold} cm/s")
+        avg_vel = np.empty(len(base_time) - 1)
+        
+        for i in range(len(base_time) - 1):
+            mask = (velocity_data[:, 0] >= base_time[i]) & (velocity_data[:, 0] < base_time[i + 1])
+            if np.any(mask):
+                avg_vel[i] = np.nanmean(velocity_data[mask, 1])
+            else:
+                avg_vel[i] = np.nan
+
+        np.save('/home/mag/variance-analysis/vel_test.npy', avg_vel)
+        low_vel_bins = np.where((np.isnan(avg_vel)) | (avg_vel < velocity_threshold))[0]
+        ratio = (len(low_vel_bins) / (len(base_time) - 1)) * 100
+        print(f"Excluding {ratio:.2f}% of time bins due to low velocity")
+        freq_maps[low_vel_bins, 1, :] = np.nan
+
+    # Define bin edges
+    x_bins = np.linspace(x_min, x_max, n_x_bins + 1)
+    y_bins = np.linspace(y_min, y_max, n_y_bins + 1)
+    hd_bins = np.linspace(0, hd_max, n_hd_bins + 1)
+
+    # Create cross-validation masks
+    cv_masks = []
+    n_points = len(base_time) - 1
+    folds = np.array_split(np.arange(n_points), cv_count)
+    
+    for cv in range(cv_count):
+        mask = np.ones(n_points, dtype=bool)
+        mask[folds[cv]] = False
+        cv_masks.append(mask)
+
+    # Initialize output arrays with x, y, hd dimensions
+    global_train_maps = [np.full((n_x_bins, n_y_bins, n_hd_bins, n_neurons), np.nan) for _ in range(cv_count)]
+    global_test_maps = [np.full((n_x_bins, n_y_bins, n_hd_bins, n_neurons), np.nan) for _ in range(cv_count)]
+    folded_train_maps = [np.full((n_x_bins, n_y_bins, n_hd_bins, 2, n_neurons), np.nan) for _ in range(cv_count)]
+    folded_test_maps = [np.full((n_x_bins, n_y_bins, n_hd_bins, 2, n_neurons), np.nan) for _ in range(cv_count)]
+
+    print("Creating cross-validation rate maps...")
+    
+    # Process each X bin
+    for i in tqdm(range(len(x_bins) - 1), desc="X bins"):
+        # Find position indices in current X bin
+        x_indices = np.where((x >= x_bins[i]) & (x < x_bins[i + 1]))[0]
+        
+        if len(x_indices) > 2:  # Need sufficient samples
+            # Process each Y bin
+            for j in range(len(y_bins) - 1):
+                # Find positions in current Y bin (within X bin)
+                y_mask = (y[x_indices] >= y_bins[j]) & (y[x_indices] < y_bins[j + 1])
+                
+                if np.any(y_mask):
+                    xy_indices = x_indices[y_mask]
+                    
+                    # Map position indices to time bin indices
+                    time_indices = np.array([np.abs(base_time - positions[idx, 0]).argmin() 
+                                           for idx in xy_indices])
+                    
+                    # Process each HD bin
+                    for k in range(len(hd_bins) - 1):
+                        # Select positions within current HD bin
+                        hd_mask = (hd[xy_indices] >= hd_bins[k]) & (hd[xy_indices] < hd_bins[k + 1])
+                        
+                        if np.any(hd_mask):
+                            hd_xy_indices = xy_indices[hd_mask]
+                            hd_time_indices = np.array([np.abs(base_time - positions[idx, 0]).argmin() 
+                                                      for idx in hd_xy_indices])
+                            
+                            # Shuffle indices for random sampling
+                            np.random.shuffle(hd_time_indices)
+                            
+                            # Split into two folds for folded analysis
+                            half = len(hd_time_indices) // 2
+                            if len(hd_time_indices) % 2 == 0:
+                                fold0_idx = hd_time_indices[:half]
+                                fold1_idx = hd_time_indices[half:]
+                            else:
+                                fold0_idx = hd_time_indices[:half]
+                                fold1_idx = hd_time_indices[half:-1]
+                            
+                            # Process each CV split
+                            for cv in range(cv_count):
+                                mask_cv = cv_masks[cv]
+                                
+                                # Global method: use all samples with CV mask
+                                train_idx_global = hd_time_indices[mask_cv[hd_time_indices]]
+                                test_idx_global = hd_time_indices[~mask_cv[hd_time_indices]]
+                                
+                                # Calculate global rates
+                                if len(train_idx_global) > 0:
+                                    global_train_rate = np.nanmean(freq_maps[train_idx_global, 1, :], axis=0)
+                                else:
+                                    global_train_rate = np.full(n_neurons, np.nan)
+                                
+                                if len(test_idx_global) > 0:
+                                    global_test_rate = np.nanmean(freq_maps[test_idx_global, 1, :], axis=0)
+                                else:
+                                    global_test_rate = np.full(n_neurons, np.nan)
+                                
+                                global_train_maps[cv][i, j, k, :] = global_train_rate
+                                global_test_maps[cv][i, j, k, :] = global_test_rate
+                                
+                                # Folded method: process each fold separately
+                                for fold_num, fold_idx in enumerate([fold0_idx, fold1_idx]):
+                                    train_idx_fold = fold_idx[mask_cv[fold_idx]]
+                                    test_idx_fold = fold_idx[~mask_cv[fold_idx]]
+                                    
+                                    if len(train_idx_fold) > 0:
+                                        fold_train_rate = np.nanmean(freq_maps[train_idx_fold, 1, :], axis=0)
+                                    else:
+                                        fold_train_rate = np.full(n_neurons, np.nan)
+                                    
+                                    if len(test_idx_fold) > 0:
+                                        fold_test_rate = np.nanmean(freq_maps[test_idx_fold, 1, :], axis=0)
+                                    else:
+                                        fold_test_rate = np.full(n_neurons, np.nan)
+                                    
+                                    folded_train_maps[cv][i, j, k, fold_num, :] = fold_train_rate
+                                    folded_test_maps[cv][i, j, k, fold_num, :] = fold_test_rate
+
+    runtime = (time.time() - start_time) / 60
+    print(f"Processing completed in {runtime:.2f} minutes")
+    
+    return global_train_maps, global_test_maps, folded_train_maps, folded_test_maps, cv_masks
+
+def extract_matlab_obj(obj):
+    """
+    Recursively convert MATLAB struct objects to Python dictionaries.
+    """
+    if not (isinstance(obj, mat_struct) or isinstance(obj, dict)):
+        return obj
+
+    out = {}
+    obj = obj.__dict__ if isinstance(obj, mat_struct) else obj
+
+    for key, val in obj.items():
+        if key in ['_fieldnames', 'type', 'time_unit', 'data_unit', 'name']:
+            continue
+        
+        if isinstance(val, (mat_struct, dict)):
+            out[key] = extract_matlab_obj(val)
+        elif isinstance(val, np.ndarray):
+            arr = [extract_matlab_obj(v) for v in val]
+            out[key] = np.array(arr)
+        else:
+            out[key] = val
+
+    return out
+
+def load_data(dataset, rat):
+    """
+    Load and preprocess all required data files.
+    
+    Returns:
+        positions: Position data array
+        spike_times: Spike timing data
+        excit_list: List of excitatory neuron indices
+        velocity_data: Velocity data (if available)
+        epoch_data: Behavioral epoch information
+    """
+    base_path = current_file_path / f"data/dusz/Dataset_{dataset}/{rat}/Data"
+    
+    # Load behavioral epochs
+    epochs = loadmat(base_path / "BehavEpochs.mat", 
+                     struct_as_record=False, squeeze_me=True)
+    if dataset == 6:
+        epoch_data = extract_matlab_obj(epochs['wakeEp'])
+    else:
+        epoch_data = extract_matlab_obj(epochs['wake1Ep'])
+    
+    # Load and process position data
+    tracking_data = pd.read_csv(base_path / "Tracking_data.csv")
+    tracking_data = tracking_data.set_axis(['timestamp', 'x', 'y', 'hd', 'pitch', 'roll'], axis=1)
+    positions = tracking_data[['timestamp', 'x', 'y', 'hd']].to_numpy()
+    
+    # Filter by behavioral epoch
+    position_mask = (positions[:, 0] > epoch_data['start']) & (positions[:, 0] < epoch_data['stop'])
+    positions = positions[position_mask]
+    
+    # Normalize positions to start from origin
+    positions[:, 1] += abs(np.min(positions[:, 1]))
+    positions[:, 2] += abs(np.min(positions[:, 2]))
+    
+    # Load cell type classifications
+    cell_types = loadmat(base_path / "CellTypes.mat", 
+                         struct_as_record=False, squeeze_me=True)
+    hd_list = extract_matlab_obj(cell_types['hd'])
+    excit_list = extract_matlab_obj(cell_types['ex'])
+    good_list = extract_matlab_obj(cell_types['gd'])
+    fs_list = extract_matlab_obj(cell_types['fs'])
+    
+    print(f"HD cells: {np.where(hd_list)[0]}")
+    print(f"Excitatory cells: {np.where(excit_list)[0]}")
+    print(f"Good cells: {np.where(good_list)[0]}")
+    print(f"Fast-spiking cells: {np.where(fs_list)[0]}")
+    
+    # Load and process spike data
+    spike_data = loadmat(base_path / "SpikeData.mat", 
+                         struct_as_record=False, squeeze_me=True)
+    spike_data = extract_matlab_obj(spike_data['S'])
+    
+    # Build spike times array
+    spike_times_list = []
+    for cell_idx, cell_data in enumerate(spike_data['C']):
+        spike_times_cell = cell_data['tsd']['t']
+        for spike_time in spike_times_cell:
+            spike_times_list.append([spike_time, cell_idx])
+    
+    spike_times = np.array(spike_times_list)
+    spike_times = spike_times[np.argsort(spike_times[:, 0])]  # Sort by time
+    
+    # Filter by behavioral epoch
+    spike_mask = (spike_times[:, 0] > epoch_data['start']) & (spike_times[:, 0] < epoch_data['stop'])
+    spike_times = spike_times[spike_mask]
+    
+    # Load velocity data if available
+    velocity_data = None
+    vel_path = base_path / "Velocity.mat"
+    if os.path.exists(vel_path):
+        velocity_data = loadmat(vel_path, struct_as_record=False, squeeze_me=True)
+        velocity_data = extract_matlab_obj(velocity_data['vel'])
+        velocity_data = np.column_stack((velocity_data['t'], velocity_data['data']))
+        
+        # Filter by behavioral epoch
+        mask = (velocity_data[:, 0] > epoch_data['start']) & (velocity_data[:, 0] < epoch_data['stop'])
+        velocity_data = velocity_data[mask]
+    
+    return positions, spike_times, np.where(hd_list == 1)[0], velocity_data, epoch_data
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Compute cross-validation HD-XY rate maps from neural spike and position data."
+    )
+    parser.add_argument("--dataset", required=True, type=int, 
+                       help="Dataset number")
+    parser.add_argument("--rat", required=True, type=str, 
+                       help="Rat identifier")
+    parser.add_argument("--n_x_bins", default=17, type=int, 
+                       help="Number of X spatial bins (default: 17)")
+    parser.add_argument("--n_y_bins", default=17, type=int, 
+                       help="Number of Y spatial bins (default: 17)")
+    parser.add_argument("--n_hd_bins", default=17, type=int, 
+                       help="Number of head-direction bins (default: 17)")
+    parser.add_argument("--vel_threshold", default=2, type=int, 
+                       help="Velocity threshold in cm/s (default: 2)")
+    parser.add_argument("--cv_count", default=4, type=int,
+                       help="Number of cross-validation folds (default: 4)")
+    
+    args = parser.parse_args()
+    
+    print(f"Processing Dataset {args.dataset}, Rat {args.rat}")
+    print(f"X bins: {args.n_x_bins}, Y bins: {args.n_y_bins}, HD bins: {args.n_hd_bins}")
+    print(f"Velocity threshold: {args.vel_threshold} cm/s")
+    print(f"CV folds: {args.cv_count}")
+    
+    # Load all data
+    positions, spike_times, excit_list, velocity_data, epoch_data = load_data(args.dataset, args.rat)
+    
+    # Compute cross-validation rate maps
+    (global_train_maps, global_test_maps, 
+     folded_train_maps, folded_test_maps, cv_masks) = get_rate_maps_cv(
+        spike_times=spike_times,
+        positions=positions,
+        excit_list=excit_list,
+        n_x_bins=args.n_x_bins,
+        n_y_bins=args.n_y_bins,
+        n_hd_bins=args.n_hd_bins,
+        velocity_threshold=args.vel_threshold,
+        velocity_data=velocity_data,
+        cv_count=args.cv_count
+    )
+
+    # Create output directory
+    save_path = current_file_path / f"results/dusz/Dataset_{args.dataset}/{args.rat}"
+    os.makedirs(save_path, exist_ok=True)
+    
+    # Save results for each CV fold
+    print(f"Saving results to {save_path}")
+    for cv in range(args.cv_count):
+        base_name = f"x_y_hd_rate_map_cv{cv}_{args.n_x_bins}_{args.n_y_bins}_{args.n_hd_bins}"
+        
+        np.save(f"{save_path}/{base_name}_global_train.npy", global_train_maps[cv])
+        np.save(f"{save_path}/{base_name}_global_test.npy", global_test_maps[cv])
+        np.save(f"{save_path}/{base_name}_fold_train.npy", folded_train_maps[cv])
+        np.save(f"{save_path}/{base_name}_fold_test.npy", folded_test_maps[cv])
+        np.save(f"{save_path}/cv_mask{cv}_{args.n_x_bins}_{args.n_y_bins}_{args.n_hd_bins}.npy", cv_masks[cv])
+    
+    print("Analysis completed successfully!")
+
+if __name__ == "__main__":
+    main()
+
+# the other pipeline's decoder, which works:
+
+import argparse
+import os
+import numpy as np
+import pandas as pd
+from scipy.io import loadmat
+from scipy.io.matlab._mio5_params import mat_struct
+import time
+from tqdm import tqdm
+from pathlib import Path
+
+def extract_matlab_obj(obj):
+    """
+    Recursively convert MATLAB struct objects to Python dictionaries.
+    """
+    if not (isinstance(obj, mat_struct) or isinstance(obj, dict)):
+        return obj
+
+    out = {}
+    obj = obj.__dict__ if isinstance(obj, mat_struct) else obj
+
+    for key, val in obj.items():
+        # Skip metadata fields
+        if key in ['_fieldnames', 'type', 'time_unit', 'data_unit', 'name']:
+            continue
+
+        if isinstance(val, (mat_struct, dict)):
+            out[key] = extract_matlab_obj(val)
+        elif isinstance(val, np.ndarray):
+            arr = [extract_matlab_obj(v) for v in val]
+            out[key] = np.array(arr)
+        else:
+            out[key] = val
+
+    return out
+
+def bin_spike_counts(spike_times, base_time):
+    """
+    Bin spike times into counts for each neuron and time bin.
+    
+    Parameters:
+        spike_times: (N x 2) array with columns [timestamp, neuron_id]
+        base_time: 1D array of time bin edges
+    
+    Returns:
+        spike_counts: 2D array of shape (n_time_bins, n_neurons)
+    """
+    n_neurons = int(np.max(spike_times[:, 1])) + 1
+    n_bins = len(base_time) - 1
+    spike_counts = np.zeros((n_bins, n_neurons))
+    
+    # Use numpy histogram for efficient binning
+    for neuron_id in range(n_neurons):
+        neuron_spikes = spike_times[spike_times[:, 1] == neuron_id, 0]
+        if len(neuron_spikes) > 0:
+            counts, _ = np.histogram(neuron_spikes, bins=base_time)
+            spike_counts[:, neuron_id] = counts
+
+    return spike_counts
+
+def joint_bayesian_decoding(rate_map, spike_counts, tau, x_bins, y_bins, hd_bins, 
+                           avg_vel, vel_threshold, eps=1e-10):
+    """
+    Joint Bayesian decoding of spatial position (x, y) and head direction using Poisson likelihood.
+    
+    For each time bin, computes the Poisson log-likelihood for every (x, y, head direction)
+    bin combination, then selects the bin with highest posterior probability.
+    
+    Time bins with velocity below threshold are skipped (decoded as NaN).
+    
+    Parameters:
+        rate_map: 4D array (n_x_bins, n_y_bins, n_hd_bins, n_neurons) - tuning curves
+        spike_counts: 2D array (n_time_bins, n_neurons) - observed spike counts
+        tau: time bin size in seconds
+        x_bins: x position bin edges
+        y_bins: y position bin edges
+        hd_bins: head direction bin edges
+        avg_vel: 1D array of average velocity per time bin
+        vel_threshold: minimum velocity threshold for decoding
+        eps: small constant to avoid log(0)
+    
+    Returns:
+        decoded_x: decoded x position (bin centers) for each time bin
+        decoded_y: decoded y position (bin centers) for each time bin
+        decoded_hd: decoded head direction (bin centers) for each time bin
+        posterior_all: list of posterior probability arrays (one per time bin)
+    """
+    n_time_bins = spike_counts.shape[0]
+    n_x_bins = rate_map.shape[0]
+    n_y_bins = rate_map.shape[1]
+    n_hd_bins = rate_map.shape[2]
+    
+    decoded_x = np.full(n_time_bins, np.nan)
+    decoded_y = np.full(n_time_bins, np.nan)
+    decoded_hd = np.full(n_time_bins, np.nan)
+    posterior_all = []
+    
+    print(f"Decoding {n_time_bins} time bins using {rate_map.shape[3]} neurons...")
+    
+    # Process each time bin
+    for t in tqdm(range(n_time_bins), desc="Decoding time bins"):
+        # Skip if velocity is too low or undefined
+        if np.isnan(avg_vel[t]) or avg_vel[t] < vel_threshold:
+            decoded_x[t] = np.nan
+            decoded_y[t] = np.nan
+            decoded_hd[t] = np.nan
+            posterior_all.append(np.full((n_x_bins, n_y_bins, n_hd_bins), np.nan))
+            continue
+
+        # Poisson log-likelihood: k*log(λ*τ) - λ*τ
+        # where k = spike_counts[t], λ = rate_map, τ = tau
+        spike_data = spike_counts[t][None, None, None, :]  # Shape: (1, 1, 1, n_neurons)
+        rate_data = rate_map * tau  # Expected spike count
+        
+        # Compute log-likelihood for each (x, y, hd) bin
+        log_likelihood = np.nansum(
+            spike_data * np.log(rate_data + eps) - rate_data, 
+            axis=3
+        )
+        
+        # Convert to posterior probabilities (normalize for numerical stability)
+        max_log_likelihood = np.nanmax(log_likelihood)
+        posterior = np.exp(log_likelihood - max_log_likelihood)
+        posterior = posterior / np.nansum(posterior)
+        posterior_all.append(posterior)
+        
+        # Find bin with maximum posterior probability
+        x_idx, y_idx, hd_idx = np.unravel_index(np.nanargmax(posterior), posterior.shape)
+        
+        # Convert bin indices to bin centers
+        decoded_x[t] = (x_bins[x_idx] + x_bins[x_idx + 1]) / 2
+        decoded_y[t] = (y_bins[y_idx] + y_bins[y_idx + 1]) / 2
+        decoded_hd[t] = (hd_bins[hd_idx] + hd_bins[hd_idx + 1]) / 2
+
+    return decoded_x, decoded_y, decoded_hd, posterior_all
+
+def load_data(dataset, rat, current_file_path):
+    """
+    Load and preprocess all data files needed for decoding.
+    
+    Returns:
+        spike_times: Filtered spike timing data
+        positions: Position data array
+        velocity_data: Velocity measurements
+        epoch_data: Behavioral epoch information
+        excit_list: Indices of excitatory neurons
+    """
+    base_path = current_file_path / f"data/dusz/Dataset_{dataset}/{rat}/Data"
+    
+    # Load spike data
+    print("Loading spike data...")
+    spike_data = loadmat(base_path / "SpikeData.mat", struct_as_record=False, squeeze_me=True)
+    spike_data = extract_matlab_obj(spike_data['S'])
+    
+    # Build spike times array
+    spike_times_list = []
+    for cell_idx, cell_data in enumerate(spike_data['C']):
+        spike_times_cell = cell_data['tsd']['t']
+        for spike_time in spike_times_cell:
+            spike_times_list.append([spike_time, cell_idx])
+    
+    spike_times = np.array(spike_times_list)
+    spike_times = spike_times[np.argsort(spike_times[:, 0])]  # Sort by time
+    
+    # Load behavioral epochs
+    print("Loading behavioral epochs...")
+    epochs = loadmat(base_path / "BehavEpochs.mat", struct_as_record=False, squeeze_me=True)
+    if dataset == 6:
+        epoch_data = extract_matlab_obj(epochs['wakeEp'])
+    else:
+        epoch_data = extract_matlab_obj(epochs['wake1Ep'])
+    
+    # Filter spikes by behavioral epoch
+    spike_mask = (spike_times[:, 0] > epoch_data['start']) & (spike_times[:, 0] < epoch_data['stop'])
+    spike_times = spike_times[spike_mask]
+    
+    # Load cell type classifications
+    print("Loading cell classifications...")
+    cell_types = loadmat(base_path / "CellTypes.mat", struct_as_record=False, squeeze_me=True)
+    hd_list = extract_matlab_obj(cell_types['hd'])
+    excit_list = extract_matlab_obj(cell_types['ex'])
+    excit_indices = np.where(hd_list == 1)[0]
+    
+    # Load position data
+    print("Loading position data...")
+    tracking_data = pd.read_csv(base_path / "Tracking_data.csv")
+    tracking_data = tracking_data.set_axis(['timestamp', 'x', 'y', 'hd', 'pitch', 'roll'], axis=1)
+    positions = tracking_data[['timestamp', 'x', 'y', 'hd']].to_numpy()
+    
+    # Filter positions by behavioral epoch
+    position_mask = (positions[:, 0] > epoch_data['start']) & (positions[:, 0] < epoch_data['stop'])
+    positions = positions[position_mask]
+    
+    # Normalize positions to start from origin
+    positions[:, 1] += abs(np.min(positions[:, 1]))
+    positions[:, 2] += abs(np.min(positions[:, 2]))
+    
+    # Load velocity data
+    print("Loading velocity data...")
+    velocity_data = None
+    vel_path = base_path / "Velocity.mat"
+    if vel_path.exists():
+        velocity_data = loadmat(vel_path, struct_as_record=False, squeeze_me=True)
+        velocity_data = extract_matlab_obj(velocity_data['vel'])
+        velocity_data = np.column_stack((velocity_data['t'], velocity_data['data']))
+        
+        # Filter by behavioral epoch
+        mask = (velocity_data[:, 0] > epoch_data['start']) & (velocity_data[:, 0] < epoch_data['stop'])
+        velocity_data = velocity_data[mask]
+    
+    return spike_times, positions, velocity_data, epoch_data, excit_indices
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Joint Bayesian decoding of spatial position (x, y) and head direction."
+    )
+    parser.add_argument("--dataset", required=True, type=int, 
+                       help="Dataset number")
+    parser.add_argument("--rat", required=True, type=str, 
+                       help="Rat identifier")
+    parser.add_argument("--n_x_bins", default=17, type=int, 
+                       help="Number of X spatial bins (default: 17)")
+    parser.add_argument("--n_y_bins", default=17, type=int, 
+                       help="Number of Y spatial bins (default: 17)")
+    parser.add_argument("--n_hd_bins", default=17, type=int, 
+                       help="Number of head-direction bins (default: 17)")
+    parser.add_argument("--tau", default=0.120, type=float, 
+                       help="Time bin size in seconds (default: 0.120)")
+    parser.add_argument("--vel_threshold", default=2, type=int, 
+                       help="Velocity threshold in cm/s (default: 2)")
+    parser.add_argument("--cv_index", default=-1, type=int, 
+                       help="Cross-validation fold index (-1 for no CV)")
+    
+    args = parser.parse_args()
+    
+    print(f"Joint X-Y-HD Bayesian Decoding")
+    print(f"Dataset {args.dataset}, Rat {args.rat}")
+    print(f"X bins: {args.n_x_bins}, Y bins: {args.n_y_bins}, HD bins: {args.n_hd_bins}")
+    print(f"Time bin size: {args.tau}s, Velocity threshold: {args.vel_threshold} cm/s")
+    if args.cv_index >= 0:
+        print(f"Using cross-validation fold: {args.cv_index}")
+
+    current_file_path = Path().resolve()
+    save_path = current_file_path / f"results/dusz/Dataset_{args.dataset}/{args.rat}"
+
+    # Load precomputed rate maps
+    print("Loading rate maps...")
+    if args.cv_index < 0:
+        rate_map_file = save_path / f"x_y_hd_rate_map_{args.n_x_bins}_{args.n_y_bins}_{args.n_hd_bins}.npy"
+    else:
+        rate_map_file = save_path / f"x_y_hd_rate_map_cv{args.cv_index}_{args.n_x_bins}_{args.n_y_bins}_{args.n_hd_bins}_global_train.npy"
+    
+    if not rate_map_file.exists():
+        print(f"Error: Rate map file not found at {rate_map_file}")
+        print("Please run the rate map analysis script first.")
+        return
+    
+    rate_map = np.load(rate_map_file)  # shape: (n_x_bins, n_y_bins, n_hd_bins, n_neurons)
+    print(f"Loaded rate map with shape: {rate_map.shape}")
+
+    # Load all required data
+    spike_times, positions, velocity_data, epoch_data, excit_indices = load_data(
+        args.dataset, args.rat, current_file_path
+    )
+
+    # Create time bins for spike counting
+    base_time = np.arange(spike_times[0, 0], spike_times[-1, 0] + args.tau, args.tau)
+    spike_counts = bin_spike_counts(spike_times, base_time)
+    
+    # Filter spike counts to only include excitatory neurons
+    spike_counts = spike_counts[:, excit_indices]
+    print(f"Using {len(excit_indices)} excitatory neurons for decoding")
+
+    # Extract spatial features
+    x = positions[:, 1]
+    y = positions[:, 2]
+    hd = (positions[:, 3] + 360) % 360  # Normalize head direction
+    
+    # Create bin edges matching those used in rate map creation
+    x_min, x_max = np.min(x), np.max(x)
+    y_min, y_max = np.min(y), np.max(y)
+    hd_max = np.max(hd)
+    
+    x_bins = np.linspace(x_min, x_max, args.n_x_bins + 1)
+    y_bins = np.linspace(y_min, y_max, args.n_y_bins + 1)
+    hd_bins = np.linspace(0, hd_max, args.n_hd_bins + 1)
+
+    # Compute average velocity per time bin
+    print("Computing velocity for each time bin...")
+    avg_vel = np.full(len(base_time) - 1, np.nan)
+    
+    if velocity_data is not None:
+        for i in range(len(base_time) - 1):
+            mask = (velocity_data[:, 0] >= base_time[i]) & (velocity_data[:, 0] < base_time[i + 1])
+            if np.any(mask):
+                avg_vel[i] = np.nanmean(velocity_data[mask, 1])
+
+    # Apply cross-validation filtering if specified
+    if args.cv_index >= 0:
+        print(f"Applying CV fold {args.cv_index} filtering...")
+        cv_mask_file = save_path / f"cv_mask{args.cv_index}_{args.n_x_bins}_{args.n_y_bins}_{args.n_hd_bins}.npy"
+        
+        if not cv_mask_file.exists():
+            print(f"Error: CV mask file not found at {cv_mask_file}")
+            return
+        
+        cv_mask = np.load(cv_mask_file)
+        test_indices = np.where(cv_mask == False)[0]
+        
+        # Filter to test data only
+        spike_counts = spike_counts[test_indices, :]
+        avg_vel = avg_vel[test_indices]
+        
+        # Calculate time centers for test bins
+        # Use the center of each test time bin
+        time_centers = (base_time[test_indices] + base_time[test_indices + 1]) / 2
+        
+        print(f"Decoding on {len(test_indices)} test time bins")
+    else:
+        # Calculate time centers for all bins
+        time_centers = (base_time[:-1] + base_time[1:]) / 2
+
+    # Perform joint Bayesian decoding
+    print("Starting joint Bayesian decoding...")
+    start_time = time.time()
+    
+    decoded_x, decoded_y, decoded_hd, posterior_all = joint_bayesian_decoding(
+        rate_map=rate_map,
+        spike_counts=spike_counts,
+        tau=args.tau,
+        x_bins=x_bins,
+        y_bins=y_bins,
+        hd_bins=hd_bins,
+        avg_vel=avg_vel,
+        vel_threshold=args.vel_threshold
+    )
+    
+    runtime = time.time() - start_time
+    print(f"Decoding completed in {runtime:.2f} seconds")
+
+    # Save results
+    print(f"Saving results to {save_path}")
+    os.makedirs(save_path, exist_ok=True)
+    
+    if args.cv_index >= 0:
+        # Cross-validation results
+        base_name = f"decoded_cv{args.cv_index}_{args.n_x_bins}_{args.n_y_bins}_{args.n_hd_bins}"
+        np.save(save_path / f"{base_name}_x.npy", decoded_x)
+        np.save(save_path / f"{base_name}_y.npy", decoded_y)
+        np.save(save_path / f"{base_name}_hd.npy", decoded_hd)
+        np.save(save_path / f"{base_name}_posterior.npy", np.array(posterior_all))
+        np.save(save_path / f"{base_name}_time_centers.npy", time_centers)
+    else:
+        # Full dataset results
+        base_name = f"decoded_{args.n_x_bins}_{args.n_y_bins}_{args.n_hd_bins}"
+        np.save(save_path / f"{base_name}_x.npy", decoded_x)
+        np.save(save_path / f"{base_name}_y.npy", decoded_y)
+        np.save(save_path / f"{base_name}_hd.npy", decoded_hd)
+        np.save(save_path / f"{base_name}_posterior.npy", np.array(posterior_all))
+        np.save(save_path / f"{base_name}_time_centers.npy", time_centers)
+
+    # Print summary statistics
+    valid_x = decoded_x[~np.isnan(decoded_x)]
+    valid_y = decoded_y[~np.isnan(decoded_y)]
+    valid_hd = decoded_hd[~np.isnan(decoded_hd)]
+    
+    print(f"\nDecoding Summary:")
+    print(f"Total time bins: {len(decoded_hd)}")
+    print(f"Successfully decoded: {len(valid_hd)} ({100*len(valid_hd)/len(decoded_hd):.1f}%)")
+    print(f"X position range: {np.min(valid_x):.2f} - {np.max(valid_x):.2f} units")
+    print(f"Y position range: {np.min(valid_y):.2f} - {np.max(valid_y):.2f} units")
+    print(f"Head direction range: {np.min(valid_hd):.1f} - {np.max(valid_hd):.1f} degrees")
+    print("Decoding analysis completed successfully!")
+
+if __name__ == "__main__":
+    main()
+
+# rate map generation code
+
+import argparse
+import os
+import numpy as np
+from scipy.io import loadmat, savemat
+import scipy.signal as sci
+import time
+from tqdm import tqdm
+from pathlib import Path
+
+def match_times(time_list, search_time):
+    """Find the closest time match in time_list."""
+    times = time_list[:, 0]
+    array_row = np.searchsorted(times, search_time, side="left")
+    if array_row > 0 and (array_row == len(times) or 
+                          abs(search_time - times[array_row - 1]) < abs(search_time - times[array_row])):
+        return time_list[array_row - 1, 1]
+    else:
+        return time_list[array_row, 1]
+
+def compute_theta_phase(lfp):
+    """Compute theta phase from LFP data."""
+    sample_rate = 1 / np.diff(lfp[:, 0])[0]
+    
+    # Bandpass filter for theta (6-12 Hz)
+    b, a = sci.butter(2, [6, 12], btype='bandpass', fs=sample_rate)
+    filt_band = sci.lfilter(b, a, lfp[:, 1])
+    
+    # Find peaks and troughs
+    peaks = sci.find_peaks(-filt_band, distance=50)[0]
+    troughs = sci.find_peaks(filt_band, distance=50)[0]
+    
+    # Find zero crossings
+    crossings = np.where(np.diff(np.sign(filt_band)) != 0)[0] + 1
+    crossings = np.delete(crossings, np.where(crossings < peaks[0])[0][1:])
+    crossings = np.delete(crossings, np.where((crossings > peaks[0]) & (crossings < troughs[0]))[0][1:])
+    
+    if peaks[0] > troughs[0]:
+        cross_270 = crossings[::2].copy()
+        cross_90 = crossings[1::2].copy()
+    else:
+        cross_270 = crossings[1::2].copy()
+        cross_90 = crossings[::2].copy()
+    
+    # Prepare phase extrema
+    peaks = np.c_[peaks, np.zeros(np.shape(peaks))]
+    peaks[::2, 1] = 360
+    troughs = np.c_[troughs, np.ones(np.shape(troughs)) * 180]
+    cross_90 = np.c_[cross_90, np.ones(np.shape(cross_90)) * 90]
+    cross_270 = np.c_[cross_270, np.ones(np.shape(cross_270)) * 270]
+    
+    phase_extrema = np.r_[peaks, cross_90, troughs, cross_270]
+    sort_extrema = np.argsort(phase_extrema[:, 0])
+    phase_extrema = phase_extrema[sort_extrema]
+    
+    # Interpolate phase
+    mis_interpolate = []
+    for i in range(len(phase_extrema[:, 0]) - 1):
+        if phase_extrema[i + 1, 1] == 0:
+            interp_line = np.linspace(phase_extrema[i, 1], 360, 
+                                    int(np.abs(phase_extrema[i + 1, 0] - phase_extrema[i, 0])))
+        elif phase_extrema[i, 1] == 360:
+            interp_line = np.linspace(0, phase_extrema[i + 1, 1], 
+                                    int(np.abs(phase_extrema[i + 1, 0] - phase_extrema[i, 0])))
+        else:
+            interp_line = np.linspace(phase_extrema[i, 1], phase_extrema[i + 1, 1], 
+                                    int(np.abs(phase_extrema[i + 1, 0] - phase_extrema[i, 0])))
+        mis_interpolate.append(interp_line)
+    
+    interpolated_phase = [item for sublist in mis_interpolate for item in sublist]
+    pad_end = np.linspace(phase_extrema[-1, 1], False, int(len(filt_band) - phase_extrema[-1, 0]))
+    pad_start = np.ones(int(phase_extrema[0, 0])) * phase_extrema[0, 1]
+    interpolated_phase = np.r_[interpolated_phase, pad_end]
+    interpolated_phase = np.r_[pad_start, interpolated_phase]
+    
+    return np.asarray([lfp[:, 0], interpolated_phase]).T
+
+def compute_velocity(locations, base_time):
+    """Compute velocity from position data."""
+    time_step_gap = locations[3, 0] - locations[2, 0]
+    point_steps = np.diff(locations[:, 1:3], axis=0)
+    point_steps = np.vstack((point_steps, point_steps[-1]))
+    point_dist = np.linalg.norm(point_steps, axis=1) / time_step_gap
+    
+    vel_list = np.zeros((np.shape(base_time)))
+    for t in tqdm(range(len(base_time) - 1), desc="Computing velocity"):
+        spikes_in_window = np.where((locations[:, 0] < base_time[t + 1]) & 
+                                   (locations[:, 0] >= base_time[t]))[0]
+        if np.size(spikes_in_window) == 0:
+            dister = 0
+        else:
+            dister = np.mean(point_dist[spikes_in_window])
+        vel_list[t] = dister
+    
+    return vel_list
+
+def get_rate_maps_half_split(spike_mat, locations, base_time, freq_maps,
+                             env_len=200, n_bins=17, n_hd_bins=17,
+                             velocity_threshold=5, filter_vel=True,
+                             seed=777):
+    """
+    Compute rate maps by splitting visits to each bin down the middle.
+    
+    Returns:
+        rate_maps_fold0: Rate map for first half of visits (n_bins, n_bins, n_neurons, n_hd_bins)
+        rate_maps_fold1: Rate map for second half of visits (n_bins, n_bins, n_neurons, n_hd_bins)
+        occupancy_map: Occupancy map for all visits
+    """
+    np.random.seed(seed)
+    
+    tau = 0.120
+    timebin_tol = 1e-4
+    n_neurons = len(spike_mat)
+    
+    # Compute velocity and filter time bins
+    vel_list = compute_velocity(locations, base_time)
+    fast_indices = np.where(vel_list >= velocity_threshold)[0]
+    fast_bins = base_time[fast_indices] if filter_vel else base_time
+    
+    print(f"Filtering {100 - len(fast_indices)/len(base_time)*100:.1f}% of bins due to low velocity")
+    
+    # Define bin edges
+    spatial_bins = np.linspace(0, env_len, n_bins + 1)
+    hd_bins = np.linspace(0, 360.01, n_hd_bins + 1)
+    
+    # Initialize output arrays - dimensions ordered as (x, y, hd, neurons) for compatibility
+    rate_maps_fold0 = np.full((n_bins, n_bins, n_hd_bins, n_neurons), np.nan)
+    rate_maps_fold1 = np.full((n_bins, n_bins, n_hd_bins, n_neurons), np.nan)
+    occupancy_map = np.zeros((n_bins, n_bins, n_hd_bins))
+    
+    print("Creating half-split rate maps...")
+    
+    # Process each spatial bin
+    for i in tqdm(range(len(spatial_bins) - 1), desc="Processing spatial bins"):
+        for j in range(len(spatial_bins) - 1):
+            # Find positions in current spatial bin
+            freq_locs = np.where((locations[:, 1] < spatial_bins[i + 1]) & 
+                                (locations[:, 1] >= spatial_bins[i]) &
+                                (locations[:, 2] < spatial_bins[j + 1]) & 
+                                (locations[:, 2] >= spatial_bins[j]))[0]
+            
+            if freq_locs.size > 2:
+                # Map to time bins and apply velocity filter
+                freq_locers = np.array([np.abs(base_time - locations[freq_locs[k], 0]).argmin() 
+                                      for k in range(len(freq_locs))])
+                mask = np.any(np.isclose(base_time[freq_locers, None], fast_bins, atol=timebin_tol), axis=1)
+                freq_locers = freq_locers[mask]
+                
+                # Process each HD bin
+                for l in range(len(hd_bins) - 1):
+                    hd_freq_locs = np.where((locations[freq_locs, 3] >= hd_bins[l]) & 
+                                          (locations[freq_locs, 3] < hd_bins[l + 1]))[0]
+                    hd_freq_locs = freq_locs[hd_freq_locs]
+                    
+                    if hd_freq_locs.size > 0:
+                        # Map HD positions to time bins
+                        hd_freq_locers = np.array([np.abs(base_time - locations[hd_freq_locs[m], 0]).argmin() 
+                                                 for m in range(len(hd_freq_locs))])
+                        mask = np.any(np.isclose(base_time[hd_freq_locers, None], fast_bins, atol=timebin_tol), axis=1)
+                        hd_freq_locers = hd_freq_locers[mask]
+                        
+                        if len(hd_freq_locers) > 0:
+                            # Shuffle for random sampling
+                            np.random.shuffle(hd_freq_locers)
+                            
+                            # Split into two halves
+                            half = len(hd_freq_locers) // 2
+                            fold0_idx = hd_freq_locers[:half] if half > 0 else []
+                            fold1_idx = hd_freq_locers[half:] if half > 0 else []
+                            
+                            # Calculate rates for each fold
+                            if len(fold0_idx) > 0:
+                                rate_maps_fold0[i, j, l, :] = np.nanmean(freq_maps[fold0_idx, 1, :], axis=0)
+                            
+                            if len(fold1_idx) > 0:
+                                rate_maps_fold1[i, j, l, :] = np.nanmean(freq_maps[fold1_idx, 1, :], axis=0)
+                            
+                            occupancy_map[i, j, l] = len(hd_freq_locs)
+    
+    return rate_maps_fold0, rate_maps_fold1, occupancy_map
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Compute half-split rate maps from Pfeiffer data."
+    )
+    parser.add_argument("--data_path", default="/home/mag/variance-analysis/data/pfeiffer", 
+                       type=str, help="Path to data directory")
+    parser.add_argument('--rat', default='1', type=str, help='Which rat')
+    parser.add_argument("--save_path", default="/home/mag/variance-analysis/results/pfeiffer", 
+                       type=str, help="Path to save results")
+    parser.add_argument("--n_bins", default=17, type=int, 
+                       help="Number of spatial bins (default: 17)")
+    parser.add_argument("--n_hd_bins", default=17, type=int, 
+                       help="Number of head-direction bins (default: 17)")
+    parser.add_argument("--vel_threshold", default=5, type=float, 
+                       help="Velocity threshold in cm/s (default: 5)")
+    parser.add_argument("--filter_vel", action='store_true', default=True,
+                       help="Filter low velocity bins (default: True)")
+    parser.add_argument("--seed", default=777, type=int,
+                       help="Random seed (default: 777)")
+    
+    args = parser.parse_args()
+    
+    np.random.seed(args.seed)
+
+    data_path = args.data_path + f'/Rat{args.rat}/Open1/'
+    save_path = args.save_path + f'/Rat{args.rat}'
+    
+    print(f"Processing data from: {data_path}")
+    print(f"Spatial bins: {args.n_bins}, HD bins: {args.n_hd_bins}")
+    print(f"Velocity threshold: {args.vel_threshold} cm/s")
+    print(f"Seed: {args.seed}")
+    
+    start_time = time.time()
+    
+    # Load data
+    print("Loading data...")
+    locations = loadmat(f'{data_path}/Position_Data.mat')['Position_Data']
+    spike_data = loadmat(f'{data_path}/Spike_Data.mat')
+    spike_times = spike_data['Spike_Data']
+    excit_list = spike_data['Excitatory_Neurons']
+    lfp = loadmat(f'{data_path}/LFP_Data.mat')['LFP_Data']
+    
+    # Parameters
+    tau = 0.120
+    interpolation_points = 1
+    env_len = 200
+    
+    # Compute theta phase
+    print("Computing theta phase...")
+    theta_time = compute_theta_phase(lfp)
+    
+    # Add theta phase to spike times
+    base_time = np.arange(spike_times[0, 0], spike_times[-1, 0] + tau, tau)
+    
+    stapler = [match_times(theta_time, spike_times[k, 0]) for k in range(len(spike_times[:, 0]))]
+    spike_times = np.c_[spike_times, stapler]
+    
+    # Extract excitatory neurons
+    spike_mat = []
+    for neuron_id in excit_list:
+        neuron_spikes = spike_times[spike_times[:, 1] == neuron_id]
+        spike_mat.append(neuron_spikes) 
+    
+    n_neurons = len(spike_mat)
+    print(f"Found {n_neurons} excitatory neurons")
+    
+    # Compute firing rate maps
+    print("Computing firing rate maps...")
+    freq_maps = np.empty((len(base_time), 2, n_neurons))
+    
+    for i in tqdm(range(n_neurons), desc="Processing neurons"):
+        current_map = np.vstack((base_time, np.empty(len(base_time)))).T
+        for j in range(len(base_time) - 1):
+            running_freq = len(np.where((spike_mat[i][:, 0] <= base_time[j + 1]) &
+                                       (spike_mat[i][:, 0] > base_time[j]))[0]) / tau
+            current_map[j, 1] = running_freq
+        freq_maps[:, :, i] = current_map
+    
+    # Compute half-split rate maps
+    print("Computing half-split rate maps...")
+    rate_maps_fold0, rate_maps_fold1, occupancy_map = get_rate_maps_half_split(
+        spike_mat=spike_mat,
+        locations=locations,
+        base_time=base_time,
+        freq_maps=freq_maps,
+        env_len=env_len,
+        n_bins=args.n_bins,
+        n_hd_bins=args.n_hd_bins,
+        velocity_threshold=args.vel_threshold,
+        filter_vel=args.filter_vel,
+        seed=args.seed
+    )
+    
+    # Create output directory
+    os.makedirs(save_path, exist_ok=True)
+    
+    # Save results
+    print(f"Saving results to {save_path}...")
+    base_name = f"x_y_hd_rate_map_{args.n_bins}_{args.n_bins}_{args.n_hd_bins}"
+    
+    # Save raw rate maps
+    np.save(f"{save_path}/{base_name}_fold0.npy", rate_maps_fold0)
+    np.save(f"{save_path}/{base_name}_fold1.npy", rate_maps_fold1)
+    
+    # Save occupancy map
+    np.save(f"{save_path}/hd_occupancy_map_{args.n_bins}_{args.n_bins}_{args.n_hd_bins}.npy", 
+            occupancy_map)
+    
+    # Save general data
+    np.save(f'{save_path}/locations.npy', locations)
+    np.save(f'{save_path}/time_bins.npy', base_time)
+    
+    runtime = (time.time() - start_time) / 60
+    print(f"Processing completed in {runtime:.2f} minutes")
+
+if __name__ == "__main__":
+    main()
+
+
+# decoding code:
+
+import argparse
+import os
+import numpy as np
+from scipy.io import loadmat
+import time
+from tqdm import tqdm
+from pathlib import Path
+
+def bin_spike_counts(spike_times, base_time, excit_list):
+    """
+    Bin spike times into counts for each excitatory neuron and time bin.
+    
+    Parameters:
+        spike_times: (N x 3) array with columns [timestamp, neuron_id, theta_phase]
+        base_time: 1D array of time bin edges
+        excit_list: List of excitatory neuron indices
+    
+    Returns:
+        spike_counts: 2D array of shape (n_time_bins, n_excit_neurons)
+    """
+    n_bins = len(base_time) - 1
+    n_neurons = len(excit_list)
+    spike_counts = np.zeros((n_bins, n_neurons))
+    
+    # Map excitatory neuron IDs to indices
+    neuron_map = {neuron_id: idx for idx, neuron_id in enumerate(excit_list)}
+    
+    # Use numpy histogram for efficient binning
+    for idx, neuron_id in enumerate(excit_list):
+        neuron_spikes = spike_times[spike_times[:, 1] == neuron_id, 0]
+        if len(neuron_spikes) > 0:
+            counts, _ = np.histogram(neuron_spikes, bins=base_time)
+            spike_counts[:, idx] = counts
+    
+    return spike_counts
+
+def joint_bayesian_decoding(rate_map, spike_counts, tau, x_bins, y_bins, hd_bins, 
+                           avg_vel, vel_threshold, eps=1e-10):
+    """
+    Joint Bayesian decoding of spatial position (x, y) and head direction using Poisson likelihood.
+    
+    Parameters:
+        rate_map: 4D array (n_x_bins, n_y_bins, n_hd_bins, n_neurons) - tuning curves
+        spike_counts: 2D array (n_time_bins, n_neurons) - observed spike counts
+        tau: time bin size in seconds
+        x_bins: x position bin edges
+        y_bins: y position bin edges  
+        hd_bins: head direction bin edges
+        avg_vel: 1D array of average velocity per time bin
+        vel_threshold: minimum velocity threshold for decoding
+        eps: small constant to avoid log(0)
+    
+    Returns:
+        decoded_x: decoded x position (bin centers) for each time bin
+        decoded_y: decoded y position (bin centers) for each time bin
+        decoded_hd: decoded head direction (bin centers) for each time bin
+        posterior_all: list of posterior probability arrays (one per time bin)
+    """
+    n_time_bins = spike_counts.shape[0]
+    n_x_bins = rate_map.shape[0]
+    n_y_bins = rate_map.shape[1]
+    n_hd_bins = rate_map.shape[2]
+    
+    decoded_x = np.full(n_time_bins, np.nan)
+    decoded_y = np.full(n_time_bins, np.nan)
+    decoded_hd = np.full(n_time_bins, np.nan)
+    posterior_all = []
+    
+    print(f"Decoding {n_time_bins} time bins using {rate_map.shape[3]} neurons...")
+    
+    # Process each time bin
+    for t in tqdm(range(n_time_bins), desc="Decoding time bins"):
+        # Skip if velocity is too low or undefined
+        if np.isnan(avg_vel[t]) or avg_vel[t] < vel_threshold:
+            decoded_x[t] = np.nan
+            decoded_y[t] = np.nan
+            decoded_hd[t] = np.nan
+            posterior_all.append(np.full((n_x_bins, n_y_bins, n_hd_bins), np.nan))
+            continue
+        
+        # Poisson log-likelihood: k*log(λ*τ) - λ*τ
+        spike_data = spike_counts[t][None, None, None, :]  # Shape: (1, 1, 1, n_neurons)
+        rate_data = rate_map * tau  # Expected spike count
+        
+        # Compute log-likelihood for each (x, y, hd) bin
+        with np.errstate(divide='ignore', invalid='ignore'):
+            log_likelihood = np.nansum(
+                spike_data * np.log(rate_data + eps) - rate_data, 
+                axis=3
+            )
+        
+        # Skip if all likelihoods are NaN
+        if np.all(np.isnan(log_likelihood)):
+            decoded_x[t] = np.nan
+            decoded_y[t] = np.nan
+            decoded_hd[t] = np.nan
+            posterior_all.append(np.full((n_x_bins, n_y_bins, n_hd_bins), np.nan))
+            continue
+        
+        # Convert to posterior probabilities (normalize for numerical stability)
+        max_log_likelihood = np.nanmax(log_likelihood)
+        posterior = np.exp(log_likelihood - max_log_likelihood)
+        posterior = posterior / np.nansum(posterior)
+        posterior_all.append(posterior)
+        
+        # Find bin with maximum posterior probability
+        x_idx, y_idx, hd_idx = np.unravel_index(np.nanargmax(posterior), posterior.shape)
+        
+        # Convert bin indices to bin centers
+        decoded_x[t] = (x_bins[x_idx] + x_bins[x_idx + 1]) / 2
+        decoded_y[t] = (y_bins[y_idx] + y_bins[y_idx + 1]) / 2
+        decoded_hd[t] = (hd_bins[hd_idx] + hd_bins[hd_idx + 1]) / 2
+    
+    return decoded_x, decoded_y, decoded_hd, posterior_all
+
+def compute_velocity(locations, base_time):
+    """Compute velocity from position data for each time bin."""
+    time_step_gap = locations[3, 0] - locations[2, 0]
+    point_steps = np.diff(locations[:, 1:3], axis=0)
+    point_steps = np.vstack((point_steps, point_steps[-1]))
+    point_dist = np.linalg.norm(point_steps, axis=1) / time_step_gap
+    
+    vel_list = np.zeros(len(base_time) - 1)
+    for t in range(len(base_time) - 1):
+        pos_in_window = np.where((locations[:, 0] >= base_time[t]) & 
+                                (locations[:, 0] < base_time[t + 1]))[0]
+        if np.size(pos_in_window) == 0:
+            vel_list[t] = 0
+        else:
+            vel_list[t] = np.mean(point_dist[pos_in_window])
+    
+    return vel_list
+
+def load_pfeiffer_data(data_path):
+    """
+    Load Pfeiffer format data for decoding.
+    
+    Returns:
+        spike_times: Spike timing data with theta phase
+        locations: Position data array
+        excit_list: List of excitatory neuron indices
+    """
+    print("Loading Pfeiffer data...")
+    
+    # Load position data
+    locations = loadmat(f'{data_path}/Position_Data.mat')['Position_Data']
+    
+    # Load spike data
+    spike_data = loadmat(f'{data_path}/Spike_Data.mat')
+    spike_times = spike_data['Spike_Data']
+    excit_list = spike_data['Excitatory_Neurons'].flatten()
+    
+    print(f"Loaded {len(spike_times)} spikes from {len(excit_list)} excitatory neurons")
+    print(f"Position data shape: {locations.shape}")
+    
+    return spike_times, locations, excit_list
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Joint Bayesian decoding using half-split rate maps."
+    )
+    parser.add_argument("--data_path", default="/home/mag/variance-analysis/data/pfeiffer", 
+                       type=str, help="Path to data directory")
+    parser.add_argument('--rat', default='1', type=str, help='Which rat')
+    parser.add_argument("--save_path", default="/home/mag/variance-analysis/results/pfeiffer", 
+                       type=str, help="Path to save results")
+    parser.add_argument("--n_bins", default=17, type=int, 
+                       help="Number of spatial bins (default: 17)")
+    parser.add_argument("--n_hd_bins", default=17, type=int, 
+                       help="Number of head-direction bins (default: 17)")
+    parser.add_argument("--tau", default=0.120, type=float, 
+                       help="Time bin size in seconds (default: 0.120)")
+    parser.add_argument("--vel_threshold", default=5, type=float, 
+                       help="Velocity threshold in cm/s (default: 5)")
+    parser.add_argument("--fold", default=0, type=int, choices=[0, 1],
+                       help="Which fold to use for decoding (0 or 1, default: 0)")
+    parser.add_argument("--decode_with_other_fold", action='store_true',
+                       help="If set, decode using the OTHER fold's rate map (cross-decoding)")
+    
+    args = parser.parse_args()
+
+    data_path = args.data_path + f'/Rat{args.rat}/Open1'
+    save_path = args.save_path + f'/Rat{args.rat}'
+    
+    print(f"Joint X-Y-HD Bayesian Decoding using Half-Split Rate Maps")
+    print(f"Data path: {data_path}")
+    print(f"Spatial bins: {args.n_bins}, HD bins: {args.n_hd_bins}")
+    print(f"Time bin size: {args.tau}s, Velocity threshold: {args.vel_threshold} cm/s")
+    
+    # Determine which fold's rate map to use
+    if False: #args.decode_with_other_fold:
+        # Use the opposite fold for cross-decoding
+        rate_map_fold = 1 - args.fold
+        print(f"Cross-decoding: Using fold {rate_map_fold} rate map to decode fold {args.fold} data")
+    else:
+        # Use the same fold for standard decoding
+        rate_map_fold = args.fold
+        print(f"Standard decoding: Using fold {rate_map_fold} for both rate map and decoding")
+    
+    # Load precomputed rate maps
+    print(f"Loading rate map from fold {rate_map_fold}...")
+    rate_map_file = f"{save_path}/x_y_hd_rate_map_{args.n_bins}_{args.n_bins}_{args.n_hd_bins}_fold{rate_map_fold}.npy"
+    
+    if not os.path.exists(rate_map_file):
+        print(f"Error: Rate map file not found at {rate_map_file}")
+        print("Please run the half-split rate map analysis script first.")
+        return
+    
+    rate_map = np.load(rate_map_file)  # shape: (n_x_bins, n_y_bins, n_hd_bins, n_neurons)
+    print(f"Loaded rate map with shape: {rate_map.shape}")
+    # rate maps look totally fine
+    
+    # Load Pfeiffer data
+    spike_times, locations, excit_list = load_pfeiffer_data(data_path)
+    
+    # Create time bins for spike counting (matching the rate map script)
+    #interpolation_points = 1
+    #position_sample = np.diff(locations[:, 0])[1]
+    #dec_tau = position_sample / interpolation_points
+    base_time = np.arange(spike_times[0, 0], spike_times[-1, 0] + args.tau, args.tau)
+    
+    # Bin spike counts for excitatory neurons only
+    spike_counts = bin_spike_counts(spike_times, base_time, excit_list)
+    print(f"Spike counts shape: {spike_counts.shape}")
+
+    # checked spike counts, they look fine
+
+    np.save('/home/mag/variance-analysis/spike_test.npy', spike_counts)
+    
+    # Create bin edges matching those used in rate map creation
+    env_len = 200  # Environment length for Pfeiffer data
+    x_bins = np.linspace(0, env_len, args.n_bins + 1)
+    y_bins = np.linspace(0, env_len, args.n_bins + 1)
+    hd_bins = np.linspace(0, 360.01, args.n_hd_bins + 1)
+    
+    # Compute velocity for each time bin
+    print("Computing velocity for each time bin...")
+    avg_vel = compute_velocity(locations, base_time)
+    
+    # Calculate time centers for all bins
+    time_centers = (base_time[:-1] + base_time[1:]) / 2
+    if len(time_centers) > len(spike_counts):
+        time_centers = time_centers[:len(spike_counts)]
+    
+    # Perform joint Bayesian decoding
+    print("Starting joint Bayesian decoding...")
+    start_time_decode = time.time()
+    
+    decoded_x, decoded_y, decoded_hd, posterior_all = joint_bayesian_decoding(
+        rate_map=rate_map,
+        spike_counts=spike_counts,
+        tau=args.tau,
+        x_bins=x_bins,
+        y_bins=y_bins,
+        hd_bins=hd_bins,
+        avg_vel=avg_vel,
+        vel_threshold=args.vel_threshold
+    )
+    
+    runtime = time.time() - start_time_decode
+    print(f"Decoding completed in {runtime:.2f} seconds")
+    
+    # Save results
+    print(f"Saving results to {save_path}")
+    os.makedirs(save_path, exist_ok=True)
+    
+    # Create filename based on decoding type
+    if args.decode_with_other_fold:
+        base_name = f"decoded_cross_fold{args.fold}_{args.n_bins}_{args.n_bins}_{args.n_hd_bins}"
+    else:
+        base_name = f"decoded_fold{args.fold}_{args.n_bins}_{args.n_bins}_{args.n_hd_bins}"
+    
+    np.save(f"{save_path}/{base_name}_x.npy", decoded_x)
+    np.save(f"{save_path}/{base_name}_y.npy", decoded_y)
+    np.save(f"{save_path}/{base_name}_hd.npy", decoded_hd)
+    np.save(f"{save_path}/{base_name}_posterior.npy", np.array(posterior_all))
+    np.save(f"{save_path}/{base_name}_time_centers.npy", time_centers)
+    
+    # Print summary statistics
+    valid_x = decoded_x[~np.isnan(decoded_x)]
+    valid_y = decoded_y[~np.isnan(decoded_y)]
+    valid_hd = decoded_hd[~np.isnan(decoded_hd)]
+    
+    print(f"\nDecoding Summary:")
+    print(f"Total time bins: {len(decoded_hd)}")
+    print(f"Successfully decoded: {len(valid_hd)} ({100*len(valid_hd)/len(decoded_hd):.1f}%)")
+    if len(valid_x) > 0:
+        print(f"X position range: {np.min(valid_x):.2f} - {np.max(valid_x):.2f} cm")
+        print(f"Y position range: {np.min(valid_y):.2f} - {np.max(valid_y):.2f} cm")
+        print(f"Head direction range: {np.min(valid_hd):.1f} - {np.max(valid_hd):.1f} degrees")
+    print("Decoding analysis completed successfully!")
+
+if __name__ == "__main__":
+    main()

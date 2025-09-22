@@ -2,3 +2,10 @@
 **/.ipynb_checkpoints
 data/dusz/*
 data/pfeiffer/*
+results/dusz/*
+results/pfeiffer/*
+results/resnet/*
+results/pred-code/*
+**/__pycache__
+ann_datasets/
+*.egg-info
