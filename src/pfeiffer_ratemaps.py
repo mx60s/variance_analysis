@@ -1,164 +1,79 @@
 #!/usr/bin/env python3
-"""
-Example usage:
-
-python pfeiffer_ratemaps.py \
-  --data_path /path/to/pfeiffer/Rat1/Open1 \
-  --save_path ./results/Rat1 \
-  --n_x_bins 30 --n_y_bins 30 --tau 0.12 \
-  --filter_vel --vel_threshold 5 --smooth_sigma_xy 1
-"""
-
 from __future__ import annotations
+
 import argparse
+import json
 import os
+import time
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 
 import numpy as np
-from scipy.io import loadmat
-from scipy.ndimage import gaussian_filter
 from tqdm import tqdm
+from scipy.io import loadmat
+from scipy.ndimage import gaussian_filter1d, gaussian_filter
+
+N_VISITS = 500 # you don't really need to mess around with this tbh 500 visits is more than enough
 
 # ---------------------------- Utilities ---------------------------- #
 
 def compute_velocity(locations: np.ndarray, base_time: np.ndarray) -> np.ndarray:
+    """Mean speed (cm/s) per time bin. locations: [t, x, y, hd]."""
     if locations.shape[0] < 4:
         raise ValueError("locations must have >= 4 rows to estimate time step.")
     time_step = float(locations[3, 0] - locations[2, 0])
     steps = np.diff(locations[:, 1:3], axis=0)
-    steps = np.vstack((steps, steps[-1]))  # pad last to align length
+    steps = np.vstack((steps, steps[-1]))
     speed_samples = np.linalg.norm(steps, axis=1) / max(time_step, 1e-9)
-
     v = np.zeros(len(base_time) - 1, dtype=float)
     for t in range(len(base_time) - 1):
         idx = np.where((locations[:, 0] >= base_time[t]) & (locations[:, 0] < base_time[t + 1]))[0]
         v[t] = 0.0 if idx.size == 0 else float(np.mean(speed_samples[idx]))
     return v
 
+def times_to_bin_indices(times: np.ndarray, edges: np.ndarray) -> np.ndarray:
+    """Map timestamps to base_time bin indices (left-closed, right-open)."""
+    idx = np.searchsorted(edges, times, side='right') - 1
+    valid = (idx >= 0) & (idx < len(edges) - 1)
+    return idx[valid]
 
-def _gaussian_filter_xy(rate_map: np.ndarray, smooth_sigma_xy: Optional[Tuple[float, float]]) -> np.ndarray:
-    if smooth_sigma_xy is None:
-        return rate_map
-    sy, sx = smooth_sigma_xy
-    if (sy is None or sy <= 0) and (sx is None or sx <= 0):
-        return rate_map
+# ---------------- Selectors ---------------- #
 
-    V = rate_map.copy()
-    isnan = np.isnan(V)
-    V[isnan] = 0.0
-    U = np.ones_like(rate_map, dtype=float)
-    U[isnan] = 0.0
+def _select_time_indices_in_hd_bin(locations: np.ndarray, base_time: np.ndarray,
+                                   hd_l: Tuple[float, float],
+                                   fast_mask: Optional[np.ndarray]) -> np.ndarray:
+    l0, l1 = hd_l
+    idx_loc = np.where((locations[:, 3] >= l0) & (locations[:, 3] < l1))[0]
+    if idx_loc.size == 0:
+        return np.array([], dtype=int)
+    t = locations[idx_loc, 0]
+    idx = times_to_bin_indices(t, base_time)
+    if fast_mask is not None:
+        idx = idx[fast_mask[idx]]
+    return idx
 
-    if rate_map.ndim == 2:
-        VV = gaussian_filter(V, sigma=(sy, sx), mode="nearest")
-        UU = gaussian_filter(U, sigma=(sy, sx), mode="nearest")
-    else:
-        VV = np.empty_like(V)
-        UU = np.empty_like(U)
-        for n in range(V.shape[-1]):
-            VV[..., n] = gaussian_filter(V[..., n], sigma=(sy, sx), mode="nearest")
-            UU[..., n] = gaussian_filter(U[..., n], sigma=(sy, sx), mode="nearest")
-
-    with np.errstate(invalid="ignore", divide="ignore"):
-        out = VV / UU
-        out[UU <= 0] = np.nan
-    return out
-
-
-def _select_time_indices_in_xy_bin(
-    locations: np.ndarray,
-    base_time: np.ndarray,
-    x_win: Tuple[float, float],
-    y_win: Tuple[float, float],
-    fast_bins: Optional[np.ndarray],
-    timebin_tol: float = 1e-4,
-) -> np.ndarray:
-    x0, x1 = x_win
-    y0, y1 = y_win
-    in_xy = np.where(
+def _select_time_indices_in_xy_bin(locations: np.ndarray, base_time: np.ndarray,
+                                   x_win: Tuple[float, float], y_win: Tuple[float, float],
+                                   fast_mask: Optional[np.ndarray]) -> np.ndarray:
+    x0, x1 = x_win; y0, y1 = y_win
+    idx_loc = np.where(
         (locations[:, 1] >= x0) & (locations[:, 1] < x1) &
         (locations[:, 2] >= y0) & (locations[:, 2] < y1)
     )[0]
-    if in_xy.size == 0:
+    if idx_loc.size == 0:
         return np.array([], dtype=int)
-
-    loc_times = locations[in_xy, 0]
-    loc_idx = np.array([int(np.abs(base_time - t).argmin()) for t in loc_times], dtype=int)
-
-    if fast_bins is not None and fast_bins.size:
-        mask = np.any(np.isclose(base_time[loc_idx, None], fast_bins, atol=timebin_tol), axis=1)
-        loc_idx = loc_idx[mask]
-
-    T = len(base_time) - 1
-    return loc_idx[(loc_idx >= 0) & (loc_idx < T)]
-
-
-# ------------------ XY spatial rate maps --------------------- #
-
-def _get_xy_edges(locations: np.ndarray, n_x_bins: int, n_y_bins: int):
-    xmin, xmax = float(np.nanmin(locations[:, 1])), float(np.nanmax(locations[:, 1]))
-    ymin, ymax = float(np.nanmin(locations[:, 2])), float(np.nanmax(locations[:, 2]))
-    x_edges = np.linspace(xmin, xmax + 1e-6, n_x_bins + 1)
-    y_edges = np.linspace(ymin, ymax + 1e-6, n_y_bins + 1)
-    return x_edges, y_edges
-
-
-def get_xy_rate_map_all(
-    spike_rates: np.ndarray,
-    locations: np.ndarray,
-    base_time: np.ndarray,
-    n_x_bins: int,
-    n_y_bins: int,
-    velocity_threshold: float = 5.0,
-    filter_vel: bool = True,
-    smooth_sigma_xy: Optional[float] = None,
-):
-    v = compute_velocity(locations, base_time)
-    fast_idx = np.where(v >= velocity_threshold)[0]
-    fast_bins = base_time[fast_idx] if filter_vel else None
-
-    x_edges, y_edges = _get_xy_edges(locations, n_x_bins, n_y_bins)
-
-    T, N = spike_rates.shape
-    rate_map = np.full((n_y_bins, n_x_bins, N), np.nan, dtype=float)
-    occupancy = np.zeros((n_y_bins, n_x_bins), dtype=float)
-
-    for iy in tqdm(range(n_y_bins), desc="Y bins"):
-        y_win = (y_edges[iy], y_edges[iy + 1])
-        for ix in range(n_x_bins):
-            x_win = (x_edges[ix], x_edges[ix + 1])
-            idx = _select_time_indices_in_xy_bin(locations, base_time, x_win, y_win, fast_bins)
-            if idx.size:
-                occupancy[iy, ix] = float(idx.size)
-                rate_map[iy, ix, :] = np.nanmean(spike_rates[idx, :], axis=0)
-
-    if smooth_sigma_xy and smooth_sigma_xy > 0:
-        rate_map = _gaussian_filter_xy(rate_map, (smooth_sigma_xy, smooth_sigma_xy))
-
-    return rate_map, occupancy, (x_edges, y_edges)
-
-
-# ------------------------- Data Loading / Prep ---------------------- #
-
-def load_pfeiffer_data(data_path: Path):
-    locations = loadmat(str(data_path / "Position_Data.mat"))["Position_Data"]
-    spike_data = loadmat(str(data_path / "Spike_Data.mat"))
-    spike_times = spike_data["Spike_Data"]  # columns: [time, neuron_id]
-    return spike_times, locations, spike_data
-
-
-def extract_excitatory_ids(spike_data: dict) -> np.ndarray:
-    excit = spike_data["Excitatory_Neurons"]
-    excit = np.asarray(excit).ravel().astype(spike_data["Spike_Data"].dtype)
-    return excit
+    t = locations[idx_loc, 0]
+    idx = times_to_bin_indices(t, base_time)
+    if fast_mask is not None:
+        idx = idx[fast_mask[idx]]
+    return idx
 
 
 def build_spike_rates(spike_times: np.ndarray, base_time: np.ndarray, tau: float, excit_list: np.ndarray) -> np.ndarray:
+    """Per-neuron per-bin firing rates using numpy.histogram → (T, N_excit)."""
     T = len(base_time) - 1
     N = len(excit_list)
     rates = np.zeros((T, N), dtype=float)
-
     for n_idx, neuron_id in enumerate(excit_list):
         neuron_spk = spike_times[spike_times[:, 1] == neuron_id, 0]
         if neuron_spk.size:
@@ -167,62 +82,182 @@ def build_spike_rates(spike_times: np.ndarray, base_time: np.ndarray, tau: float
     return rates
 
 
+def xyhd_raw_rate_map(spike_rates: np.ndarray,
+                  locations: np.ndarray,
+                  base_time: np.ndarray,
+                  n_loc_bins: int,
+                  n_hd_bins: int,
+                  avg_vel_bins: np.ndarray,
+                  vel_threshold: float,
+                  filter_vel: bool) -> Tuple[np.ndarray, np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
 
-def main():
-    parser = argparse.ArgumentParser(description="Build XY rate maps (Pfeiffer) — slim, no decoding")
-    parser.add_argument("--data_path", type=str, required=True, help="Path to RatX/Open1 directory containing mats")
-    parser.add_argument("--save_path", type=str, required=True, help="Directory to write outputs")
+    fast_mask = (avg_vel_bins >= vel_threshold) if filter_vel else None
+    
+    xmin, xmax = float(np.nanmin(locations[:,1])), float(np.nanmax(locations[:,1]))
+    ymin, ymax = float(np.nanmin(locations[:,2])), float(np.nanmax(locations[:,2]))
+    x_edges = np.linspace(xmin, xmax + 1e-6, n_loc_bins + 1)
+    y_edges = np.linspace(ymin, ymax + 1e-6, n_loc_bins + 1)
+    hd_edges = np.linspace(0.0, 360.0 + 1e-6, n_hd_bins + 1)
 
-    parser.add_argument("--tau", type=float, default=0.120, help="Time bin size (s)")
+    T, N = spike_rates.shape
+    raw_rate_map = np.full((n_loc_bins, n_loc_bins, n_hd_bins, N_VISITS, N), np.nan)
+    occupancy = np.zeros((n_loc_bins, n_loc_bins, n_hd_bins), dtype=float)
 
-    parser.add_argument("--n_x_bins", type=int, default=30, help="Number of X bins for spatial map")
-    parser.add_argument("--n_y_bins", type=int, default=30, help="Number of Y bins for spatial map")
-    parser.add_argument("--smooth_sigma_xy", type=float, default=1.0, help="Sigma (bins) for XY Gaussian smoothing; <=0 to disable")
+    for iy in tqdm(range(n_loc_bins), desc="Y bins"):
+        y_win = (y_edges[iy], y_edges[iy+1])
+        for ix in range(n_loc_bins):
+            x_win = (x_edges[ix], x_edges[ix+1])
+            idx_xy = _select_time_indices_in_xy_bin(locations, base_time, x_win, y_win, fast_mask)
+            if idx_xy.size == 0:
+                continue
+            for ih in range(n_hd_bins):
+                hd_win = (hd_edges[ih], hd_edges[ih+1])
+                idx_hd = _select_time_indices_in_hd_bin(locations, base_time, hd_win, fast_mask)
+                if idx_hd.size == 0:
+                    continue
+                idx = np.intersect1d(idx_xy, idx_hd, assume_unique=False)
+                np.random.shuffle(idx)
+                if idx.size:
+                    take = int(min(N_VISITS, idx.size))
+                    raw_rate_map[iy, ix, ih, :take, :] = np.nanmean(spike_rates[idx, :][:take], axis=0)
+                    occupancy[iy, ix, ih] = take
 
-    parser.add_argument("--vel_threshold", type=float, default=5.0, help="Velocity threshold (cm/s) for filtering")
-    parser.add_argument("--filter_vel", action="store_true", default=False, help="Apply velocity filtering (recommended)")
+    return raw_rate_map, occupancy, (x_edges, y_edges, hd_edges)
 
-    args = parser.parse_args()
 
-    data_path = Path(args.data_path)
-    save_path = Path(args.save_path)
+def get_raw_ratemaps(args: Optional[argparse.Namespace] = None, /, **overrides: Any) -> Dict[str, Any]:
+    """
+    Build XY×HD rate maps, storing raw visits.
+    Returns a small summary dict with output paths and shapes.
+    """
+    if args is None:
+        args = argparse.Namespace(**overrides)
+    else:
+        for k, v in overrides.items():
+            setattr(args, k, v)
+
+    d = args.__dict__
+    d.setdefault("data_path", "/home/mag/variance-analysis/data/pfeiffer")
+    d.setdefault("save_path", "/home/mag/variance-analysis/results/pfeiffer")
+    d.setdefault("rat", "1")
+    d.setdefault("n_loc_bins", 30)
+    d.setdefault("n_hd_bins", 60)
+    d.setdefault("tau", 0.120)
+    d.setdefault("vel_threshold", 5.0)
+    d.setdefault("filter_vel", True)
+
+    data_path = Path(d["data_path"]) / f"Rat{d['rat']}" / "Open1"
+    save_path = Path(d["save_path"]) / f"Rat{d['rat']}"
     os.makedirs(save_path, exist_ok=True)
 
-    spike_times_raw, locations, spike_data = load_pfeiffer_data(data_path)
-    excit_list = extract_excitatory_ids(spike_data)
+    print(f"\n=== XY×HD Rate Map Builder ===")
+    print(f"Data path : {data_path}")
+    print(f"Save path : {save_path}")
+    print(f"XY bins   : {d['n_loc_bins']} × {d['n_loc_bins']} | HD bins: {d['n_hd_bins']}")
+    print(f"tau: {d['tau']:.3f}s | vel_th: {d['vel_threshold']} cm/s | filter_vel: {d['filter_vel']}")
+    t0 = time.time()
 
+    locations = loadmat(str(data_path / 'Position_Data.mat'))['Position_Data']
+    spike_data = loadmat(str(data_path / 'Spike_Data.mat'))
+    spike_times_raw = spike_data['Spike_Data']  # columns: [time, neuron_id]
+    
+    excit = spike_data['Excitatory_Neurons']
+    excit_list = np.asarray(excit).ravel().astype(spike_data['Spike_Data'].dtype)
     print(f"Spikes: {len(spike_times_raw)} | Excitatory neurons: {len(excit_list)} | Position samples: {locations.shape[0]}")
 
-    # Build time base
-    start_t = float(spike_times_raw[0, 0])
-    end_t = float(spike_times_raw[-1, 0])
-    base_time = np.arange(start_t, end_t + args.tau, args.tau)
-    print(f"Time bins: {len(base_time)-1} covering {base_time[0]:.3f}–{base_time[-1]:.3f}s (tau={args.tau:.3f}s)")
+    if spike_times_raw.size == 0 or locations.size == 0 or excit_list.size == 0:
+        raise RuntimeError("Insufficient data: check paths and Excitatory_Neurons list.")
+
+    base_time = np.arange(spike_times_raw[0, 0], spike_times_raw[-1, 0] + d["tau"], d["tau"])
+    print(f"Time bins: {len(base_time)-1} covering {base_time[0]:.3f}–{base_time[-1]:.3f}s")
 
     print("Binning spikes into rates…")
-    spike_rates = build_spike_rates(spike_times_raw, base_time, args.tau, excit_list)
+    spike_rates = build_spike_rates(spike_times_raw, base_time, d["tau"], excit_list)  # (T, N)
 
-    rate_map_xy, occupancy_xy, (x_edges, y_edges) = get_xy_rate_map_all(
+    avg_vel_bins = compute_velocity(locations, base_time)
+
+    # Build map
+    rate_map, occupancy, (x_edges, y_edges, hd_edges) = xyhd_raw_rate_map(
         spike_rates=spike_rates,
         locations=locations,
         base_time=base_time,
-        n_x_bins=args.n_x_bins,
-        n_y_bins=args.n_y_bins,
-        velocity_threshold=args.vel_threshold,
-        filter_vel=args.filter_vel,
-        smooth_sigma_xy=args.smooth_sigma_xy,
+        n_loc_bins=d["n_loc_bins"],
+        n_hd_bins=d["n_hd_bins"],
+        avg_vel_bins=avg_vel_bins,
+        vel_threshold=d["vel_threshold"],
+        filter_vel=d["filter_vel"],
     )
 
-    np.save(save_path / f"xy_rate_map_{args.n_y_bins}x{args.n_x_bins}.npy", rate_map_xy)
-    np.save(save_path / f"xy_occupancy_{args.n_y_bins}x{args.n_x_bins}.npy", occupancy_xy)
-    np.save(save_path / f"x_edges_{args.n_x_bins}.npy", x_edges)
-    np.save(save_path / f"y_edges_{args.n_y_bins}.npy", y_edges)
-    print("Saved:")
-    print(f"  rate map -> {save_path / f'xy_rate_map_{args.n_y_bins}x{args.n_x_bins}.npy'}")
-    print(f"  occupancy -> {save_path / f'xy_occupancy_{args.n_y_bins}x{args.n_x_bins}.npy'}")
-    print(f"  x_edges -> {save_path / f'x_edges_{args.n_x_bins}.npy'}")
-    print(f"  y_edges -> {save_path / f'y_edges_{args.n_y_bins}.npy'}")
+    # Save
+    base = f"raw_ratemap_xyhd_{d['n_loc_bins']}x{d['n_loc_bins']}x{d['n_hd_bins']}"
+    out_path = save_path / f"{base}.npz"
+    np.savez_compressed(
+        out_path,
+        rate_map=rate_map,
+        occupancy=occupancy,
+        x_edges=x_edges,
+        y_edges=y_edges,
+        hd_edges=hd_edges
+    )
+    print(f"\nSaved: {out_path}")
 
+    meta_path = save_path / f"{base}_meta.json"
+    with open(meta_path, "w") as f:
+        json.dump({
+            "tau": d["tau"],
+            "vel_threshold": d["vel_threshold"],
+            "filter_vel": d["filter_vel"],
+            "n_loc_bins": d["n_loc_bins"],
+            "n_hd_bins": d["n_hd_bins"],
+        }, f, indent=2)
+
+    elapsed_min = (time.time() - t0) / 60.0
+    print(f"Done in {elapsed_min:.2f} min.")
+
+    return {
+        "out_npz": str(out_path),
+        "out_meta": str(meta_path),
+        "rate_map_shape": tuple(rate_map.shape),
+        "occupancy_shape": tuple(occupancy.shape),
+        "edges": {
+            "x": (float(x_edges.min()), float(x_edges.max()), int(len(x_edges)-1)),
+            "y": (float(y_edges.min()), float(y_edges.max()), int(len(y_edges)-1)),
+            "hd": (float(hd_edges.min()), float(hd_edges.max()), int(len(hd_edges)-1)),
+        },
+        "elapsed_min": float(elapsed_min),
+    }
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Make \"raw\" XY×HD rate maps (Pfeiffer data)."
+    )
+    parser.add_argument("--data_path", type=str,
+                        default="/home/mag/variance-analysis/data/pfeiffer",
+                        help="Root dir containing Rat{rat}/Open1")
+    parser.add_argument("--save_path", type=str,
+                        default="/home/mag/variance-analysis/results/pfeiffer",
+                        help="Directory to write outputs")
+    parser.add_argument("--rat", type=str, default="1", help="Rat ID")
+
+    # Binning
+    parser.add_argument("--n_loc_bins", type=int, default=30,
+                        help="Number of spatial bins per axis (X=Y=n_loc_bins)")
+    parser.add_argument("--n_hd_bins", type=int, default=60,
+                        help="Number of head-direction bins")
+
+    # Timing / thresholds
+    parser.add_argument("--tau", type=float, default=0.120, help="Time bin size (s)")
+    parser.add_argument("--vel_threshold", type=float, default=5.0,
+                        help="Velocity threshold (cm/s)")
+    parser.add_argument("--filter_vel", action="store_true", default=True,
+                        help="Filter low-velocity bins")
+
+    return parser
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+    decode_solo(args)
 
 if __name__ == "__main__":
     main()

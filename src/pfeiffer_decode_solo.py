@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 
 import argparse
 import json
@@ -202,8 +203,7 @@ def get_hd_rate_maps_cv(
             mask_cv = cv_masks[cv]
             valid = idx[idx < mask_cv.size]
             cv_idx = valid[mask_cv[valid]]
-            #cv_rate_maps[cv][l, :] = np.nanmean(spike_rates[cv_idx, :], axis=0)
-            cv_rate_maps[cv][l, :] = _nanmean_weighted(spike_rates[cv_idx, :])
+            cv_rate_maps[cv][l, :] = np.nanmean(spike_rates[cv_idx, :])
 
     return (
         cv_rate_maps,
@@ -242,15 +242,6 @@ def get_hd_rate_map_all(
 
 # ------------------ XY spatial rate maps --------------------- #
 
-def _get_xy_edges(locations: np.ndarray, n_x_bins: int, n_y_bins: int, arena_pad_cm: float = 0.0):
-    xmin, xmax = float(np.nanmin(locations[:,1])), float(np.nanmax(locations[:,1]))
-    ymin, ymax = float(np.nanmin(locations[:,2])), float(np.nanmax(locations[:,2]))
-    xmin -= arena_pad_cm; xmax += arena_pad_cm
-    ymin -= arena_pad_cm; ymax += arena_pad_cm
-    x_edges = np.linspace(xmin, xmax + 1e-6, n_x_bins + 1)
-    y_edges = np.linspace(ymin, ymax + 1e-6, n_y_bins + 1)
-    return x_edges, y_edges
-
 def get_xy_rate_map_all(
     spike_rates: np.ndarray,
     locations: np.ndarray,
@@ -259,14 +250,16 @@ def get_xy_rate_map_all(
     n_y_bins: int,
     velocity_threshold: float = 5.0,
     filter_vel: bool = True,
-    arena_pad_cm: float = 0.0,
 ):
     """Build a single (all-data) XY tuning map (Y, X, N), plus occupancy (Y, X)."""
     v = compute_velocity(locations, base_time)
     fast_idx = np.where(v >= velocity_threshold)[0]
     fast_bins = base_time[fast_idx] if filter_vel else None
 
-    x_edges, y_edges = _get_xy_edges(locations, n_x_bins, n_y_bins, arena_pad_cm)
+    xmin, xmax = float(np.nanmin(locations[:,1])), float(np.nanmax(locations[:,1]))
+    ymin, ymax = float(np.nanmin(locations[:,2])), float(np.nanmax(locations[:,2]))
+    x_edges = np.linspace(xmin, xmax + 1e-6, n_x_bins + 1)
+    y_edges = np.linspace(ymin, ymax + 1e-6, n_y_bins + 1)
 
     T, N = spike_rates.shape
     rate_map = np.full((n_y_bins, n_x_bins, N), np.nan, dtype=float)
@@ -293,7 +286,6 @@ def get_xy_rate_maps_cv(
     filter_vel: bool = True,
     cv_count: int = 4,
     seed: int = 777,
-    arena_pad_cm: float = 0.0,
 ):
     """Cross-validated XY maps: returns lists per fold analogous to HD."""
     rng = np.random.RandomState(seed)
@@ -305,7 +297,10 @@ def get_xy_rate_maps_cv(
         f"Filtering {100.0 - (len(fast_idx) / max(len(base_time)-1,1)) * 100.0:.1f}% of bins due to low velocity"
     )
 
-    x_edges, y_edges = _get_xy_edges(locations, n_x_bins, n_y_bins, arena_pad_cm)
+    xmin, xmax = float(np.nanmin(locations[:,1])), float(np.nanmax(locations[:,1]))
+    ymin, ymax = float(np.nanmin(locations[:,2])), float(np.nanmax(locations[:,2]))
+    x_edges = np.linspace(xmin, xmax + 1e-6, n_x_bins + 1)
+    y_edges = np.linspace(ymin, ymax + 1e-6, n_y_bins + 1)
 
     T, N = spike_rates.shape
     n_points = T
@@ -406,7 +401,6 @@ def xy_bayesian_decoding(
     """2D spatial Bayesian decoding with Poisson likelihood."""
     T, N = spike_counts.shape
     Y, X, N_map = rate_map_xy.shape
-    assert N_map == N, "rate_map_xy last dim must match spike_counts."
 
     decoded_xy = np.full((T, 2), np.nan)
     posterior_all: List[np.ndarray] = []
@@ -468,11 +462,6 @@ def interp_circular_deg(t_src: np.ndarray, t_tgt: np.ndarray, angles_deg: np.nda
     return ang_interp
 
 
-def angular_distance_deg(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    d = (a - b + 180.0) % 360.0 - 180.0
-    return d
-
-
 def compute_ground_truth_hd(positions: np.ndarray, time_centers: np.ndarray, velocity_series: np.ndarray, velocity_filter: float, window: float = 0.06) -> np.ndarray:
     """Interpolate true HD at decoding centers and mask by mean speed in ±window."""
     timestamps = positions[:, 0]
@@ -495,7 +484,7 @@ def compute_ground_truth_hd(positions: np.ndarray, time_centers: np.ndarray, vel
 
 def evaluate_errors(decoded_hd: np.ndarray, time_centers: np.ndarray, positions: np.ndarray, velocity_series: np.ndarray, vel_threshold: float) -> Dict[str, Any]:
     gt = compute_ground_truth_hd(positions, time_centers, velocity_series, vel_threshold)
-    hd_err_abs = angular_distance_deg(decoded_hd, gt)
+    hd_err_abs = (decoded_hd - gt + 180.0) % 360.0 - 180.0
     total = int(hd_err_abs.size)
     valid_mask = ~np.isnan(hd_err_abs)
     valid = int(np.sum(valid_mask))
@@ -584,11 +573,359 @@ def build_spike_rates(spike_times: np.ndarray, base_time: np.ndarray, tau: float
             rates[:, n_idx] = counts.astype(float) / max(tau, 1e-9)
     return rates
 
-# ------------------------------- Main ------------------------------- #
+# ------------------------------ Public API ------------------------------ #
 
-def main():
+def decode_solo(args: Optional[argparse.Namespace] = None, /, **overrides: Any) -> Dict[str, Any]:
+    """
+    Run head-direction OR location tuning + Bayesian decoding (Pfeiffer data).
+    Returns a small summary dict (paths & basic stats).
+    """
+    if args is None:
+        args = argparse.Namespace(**overrides)
+    else:
+        for k, v in overrides.items():
+            setattr(args, k, v)
+
+    d = args.__dict__
+    d.setdefault("data_path", "/home/mag/variance-analysis/data/pfeiffer")
+    d.setdefault("save_path", "/home/mag/variance-analysis/results/pfeiffer")
+    d.setdefault("rat", "1")
+    d.setdefault("mode", "hd")
+    d.setdefault("n_hd_bins", 60)
+    d.setdefault("n_x_bins", 30)
+    d.setdefault("n_y_bins", 30)
+    d.setdefault("tau", 0.120)
+    d.setdefault("vel_threshold", 5.0)
+    d.setdefault("cv_folds", None)
+    d.setdefault("filter_vel", True)
+    d.setdefault("seed", 777)
+    d.setdefault("smooth_sigma", 2.0)
+    d.setdefault("smooth_sigma_xy", 1.0)
+    d.setdefault("save_intermediates", False)
+
+    # HD convention: ignore velocity gating at decode time
+    if d["mode"] == "hd":
+        d["filter_vel"] = False
+        d["vel_threshold"] = 0.0
+
+    # Resolve cv_folds (prompt only if interactive)
+    if d["cv_folds"] is None:
+        try:
+            import sys
+            if sys.stdin and sys.stdin.isatty():
+                user_in = input("How many CV folds? (0 = no CV): ").strip()
+                d["cv_folds"] = int(user_in)
+            else:
+                d["cv_folds"] = 0
+        except Exception:
+            print("No valid input; defaulting to 0 (no CV).")
+            d["cv_folds"] = 0
+    if d["cv_folds"] < 0:
+        raise ValueError("cv_folds must be >= 0")
+
+    data_path = Path(d["data_path"]) / f"Rat{d['rat']}" / "Open1"
+    save_path = Path(d["save_path"]) / f"Rat{d['rat']}"
+    os.makedirs(save_path, exist_ok=True)
+
+    print(f"\n=== {'Head-Direction' if d['mode']=='hd' else 'Location (XY)'} Decoding Pipeline ===")
+    print(f"Data path : {data_path}")
+    print(f"Save path : {save_path}")
+    if d["mode"] == "hd":
+        print(f"HD bins   : {d['n_hd_bins']}")
+    else:
+        print(f"XY bins   : {d['n_y_bins']} × {d['n_x_bins']}")
+    print(f"tau: {d['tau']:.3f}s | vel_th: {d['vel_threshold']} cm/s | CV folds: {d['cv_folds']}")
+
+    t0 = time.time()
+
+    print("\nLoading data…")
+    spike_times_raw, locations, spike_data = load_pfeiffer_data(data_path)
+    excit_list = extract_excitatory_ids(spike_data)
+    print(
+        f"Spikes: {len(spike_times_raw)} | Excitatory neurons: {len(excit_list)} | Position samples: {locations.shape[0]}"
+    )
+
+    base_time = np.arange(spike_times_raw[0, 0], spike_times_raw[-1, 0] + d["tau"], d["tau"])
+    print(f"Time bins: {len(base_time)-1} bins covering {base_time[0]:.3f}–{base_time[-1]:.3f}s")
+
+    print("Binning spikes into rates…")
+    spike_rates = build_spike_rates(spike_times_raw, base_time, d["tau"], excit_list)  # (T, N)
+
+    velocity_series = compute_velocity_series(locations)
+
+    # ------------------------- No-CV path ------------------------- #
+    if d["cv_folds"] == 0:
+        if d["mode"] == "hd":
+            rate_map_hd, occupancy_all, hd_edges = get_hd_rate_map_all(
+                spike_rates=spike_rates,
+                locations=locations,
+                base_time=base_time,
+                n_hd_bins=d["n_hd_bins"],
+                velocity_threshold=d["vel_threshold"],
+                filter_vel=d["filter_vel"],
+            )
+            print("Using ALL-DATA HD tuning; decoding all bins.")
+            spike_counts = (spike_rates * d["tau"]).astype(float)
+            avg_vel = compute_velocity(locations, base_time)
+            time_centers = 0.5 * (base_time[:-1] + base_time[1:])
+
+            rate_map_hd = _gaussian_filter_hd(rate_map_hd, d["smooth_sigma"])
+
+            if d["save_intermediates"]:
+                np.save(save_path / f"hd_rate_map_{d['n_hd_bins']}.npy", rate_map_hd)
+                np.save(save_path / f"hd_occupancy_map_{d['n_hd_bins']}.npy", occupancy_all)
+
+            decoded_hd, posterior_all = hd_bayesian_decoding(
+                rate_map_hd=rate_map_hd,
+                spike_counts=spike_counts,
+                tau=d["tau"],
+                hd_bins=hd_edges,
+                avg_vel=avg_vel,
+                vel_threshold=d["vel_threshold"],
+            )
+
+            print("Saving decoding outputs…")
+            base = f"decoded_hd_{d['n_hd_bins']}"
+            np.save(save_path / f"{base}.npy", decoded_hd)
+            np.save(save_path / f"{base}_posterior.npy", np.array(posterior_all, dtype=object))
+            np.save(save_path / f"{base}_time_centers.npy", time_centers)
+
+            eval_res = evaluate_errors(decoded_hd, time_centers, locations, velocity_series, d["vel_threshold"])
+            np.savez_compressed(save_path / f"errors_hd_{d['n_hd_bins']}.npz", **eval_res)
+            print("Saved error analysis:", save_path / f"errors_hd_{d['n_hd_bins']}.npz")
+            print("Error stats:")
+            for k, v in eval_res['stats'].items():
+                print(f"  {k}: {v}")
+
+            ok_hd = decoded_hd[~np.isnan(decoded_hd)]
+            print("\nDecoding Summary:")
+            print(f"Total time bins: {len(decoded_hd)}")
+            print(f"Successfully decoded: {len(ok_hd)} ({100.0 * len(ok_hd) / max(len(decoded_hd),1):.1f}%)")
+            if ok_hd.size:
+                print(f"HD range: {np.min(ok_hd):.1f} – {np.max(ok_hd):.1f} deg")
+
+            print(f"\nDone in {(time.time()-t0)/60.0:.2f} min.")
+            return {
+                "mode": "hd",
+                "outputs_prefix": str(save_path / base),
+                "n_time_bins": int(len(decoded_hd)),
+                "decoded_fraction": float(len(ok_hd) / max(len(decoded_hd), 1)),
+                "save_path": str(save_path),
+            }
+
+        else:  # XY
+            rate_map_xy, occupancy_xy, (x_edges, y_edges) = get_xy_rate_map_all(
+                spike_rates=spike_rates,
+                locations=locations,
+                base_time=base_time,
+                n_x_bins=d["n_x_bins"],
+                n_y_bins=d["n_y_bins"],
+                velocity_threshold=d["vel_threshold"],
+                filter_vel=d["filter_vel"],
+            )
+            print("Using ALL-DATA XY tuning; decoding all bins.")
+            spike_counts = (spike_rates * d["tau"]).astype(float)
+            avg_vel = compute_velocity(locations, base_time)
+            time_centers = 0.5 * (base_time[:-1] + base_time[1:])
+
+            if d["smooth_sigma_xy"] and d["smooth_sigma_xy"] > 0:
+                rate_map_xy = _gaussian_filter_xy(rate_map_xy, (d["smooth_sigma_xy"], d["smooth_sigma_xy"]))
+
+            if d["save_intermediates"]:
+                np.save(save_path / f"xy_rate_map_{d['n_y_bins']}x{d['n_x_bins']}.npy", rate_map_xy)
+                np.save(save_path / f"xy_occupancy_map_{d['n_y_bins']}x{d['n_x_bins']}.npy", occupancy_xy)
+
+            decoded_xy, posterior_all = xy_bayesian_decoding(
+                rate_map_xy=rate_map_xy,
+                spike_counts=spike_counts,
+                tau=d["tau"],
+                avg_vel=avg_vel,
+                vel_threshold=d["vel_threshold"],
+                x_edges=x_edges,
+                y_edges=y_edges,
+            )
+
+            print("Saving decoding outputs…")
+            base = f"decoded_xy_{d['n_y_bins']}x{d['n_x_bins']}"
+            np.save(save_path / f"{base}.npy", decoded_xy)
+            np.save(save_path / f"{base}_posterior.npy", np.array(posterior_all, dtype=object))
+            np.save(save_path / f"{base}_time_centers.npy", time_centers)
+
+            eval_res = evaluate_errors_xy(decoded_xy, time_centers, locations, velocity_series, d["vel_threshold"])
+            np.savez_compressed(save_path / f"errors_xy_{d['n_y_bins']}x{d['n_x_bins']}.npz", **eval_res)
+            print("Saved error analysis:", save_path / f"errors_xy_{d['n_y_bins']}x{d['n_x_bins']}.npz")
+            print("Error stats:")
+            for k, v in eval_res['stats'].items():
+                print(f"  {k}: {v}")
+
+            ok_xy = decoded_xy[~np.isnan(decoded_xy).any(axis=1)]
+            print("\nDecoding Summary:")
+            print(f"Total time bins: {len(decoded_xy)}")
+            print(f"Successfully decoded: {len(ok_xy)} ({100.0 * len(ok_xy) / max(len(decoded_xy),1):.1f}%)")
+
+            print(f"\nDone in {(time.time()-t0)/60.0:.2f} min.")
+            return {
+                "mode": "xy",
+                "outputs_prefix": str(save_path / base),
+                "n_time_bins": int(len(decoded_xy)),
+                "decoded_fraction": float(len(ok_xy) / max(len(decoded_xy), 1)),
+                "save_path": str(save_path),
+            }
+
+    # -------------------------- CV path -------------------------- #
+    else:
+        if d["mode"] == "hd":
+            (
+                rate_maps_hd,
+                occupancy_maps,
+                cv_masks,
+                hd_edges,
+            ) = get_hd_rate_maps_cv(
+                spike_rates=spike_rates,
+                locations=locations,
+                base_time=base_time,
+                n_hd_bins=d["n_hd_bins"],
+                velocity_threshold=d["vel_threshold"],
+                filter_vel=d["filter_vel"],
+                cv_count=d["cv_folds"],
+                seed=d["seed"],
+            )
+
+            cv_summary: Dict[str, Any] = {"mode": "hd", "folds": [], "n_folds": int(d["cv_folds"])}
+
+            for cv_idx in range(d["cv_folds"]):
+                print(f"\n=== Decoding CV fold {cv_idx}/{d['cv_folds']-1} (HD) ===")
+                rate_map_hd = _gaussian_filter_hd(rate_maps_hd[cv_idx], d["smooth_sigma"])
+                cv_mask = cv_masks[cv_idx]  # True=train, False=test (over T bins)
+                test_idx = np.where(~cv_mask)[0]
+                print(f"Using CV fold {cv_idx}: decoding {len(test_idx)} held-out bins.")
+
+                spike_counts = (spike_rates[test_idx, :] * d["tau"]).astype(float)
+                avg_vel_all = compute_velocity(locations, base_time)
+                avg_vel = avg_vel_all[test_idx]
+                time_centers = 0.5 * (
+                    base_time[test_idx] + base_time[np.minimum(test_idx + 1, len(base_time) - 1)]
+                )
+
+                if d["save_intermediates"]:
+                    np.save(save_path / f"hd_rate_map_cv{cv_idx}_{d['n_hd_bins']}.npy", rate_map_hd)
+                    np.save(save_path / f"cv_mask{cv_idx}_{d['n_hd_bins']}.npy", cv_mask)
+                    np.save(save_path / f"hd_occupancy_map_cv{cv_idx}_{d['n_hd_bins']}.npy", occupancy_maps[cv_idx])
+
+                decoded_hd, posterior_all = hd_bayesian_decoding(
+                    rate_map_hd=rate_map_hd,
+                    spike_counts=spike_counts,
+                    tau=d["tau"],
+                    hd_bins=hd_edges,
+                    avg_vel=avg_vel,
+                    vel_threshold=d["vel_threshold"],
+                )
+
+                print("Saving decoding outputs…")
+                base = f"decoded_hd_cv{cv_idx}_{d['n_hd_bins']}"
+                np.save(save_path / f"{base}.npy", decoded_hd)
+                np.save(save_path / f"{base}_posterior.npy", np.array(posterior_all, dtype=object))
+                np.save(save_path / f"{base}_time_centers.npy", time_centers)
+
+                fold_record: Dict[str, Any] = {
+                    "cv_idx": int(cv_idx),
+                    "n_test_bins": int(len(test_idx)),
+                    "output_prefix": base,
+                }
+
+                eval_res = evaluate_errors(decoded_hd, time_centers, locations, velocity_series, d["vel_threshold"])
+                np.savez_compressed(save_path / f"errors_hd_cv{cv_idx}_{d['n_hd_bins']}.npz", **eval_res)
+                print("Saved error analysis:", save_path / f"errors_hd_cv{cv_idx}_{d['n_hd_bins']}.npz")
+                fold_record["error_stats"] = eval_res["stats"]
+
+                cv_summary["folds"].append(fold_record)
+
+            with open(save_path / f"cv_summary_hd_{d['n_hd_bins']}.json", "w") as f:
+                json.dump(cv_summary, f, indent=2)
+            print("\nWrote CV summary:", save_path / f"cv_summary_hd_{d['n_hd_bins']}.json")
+            print(f"\nDone in {(time.time()-t0)/60.0:.2f} min.")
+            return {"mode": "hd", "cv_summary": str(save_path / f"cv_summary_hd_{d['n_hd_bins']}.json")}
+
+        else:
+            (
+                rate_maps_xy,
+                occupancy_maps_xy,
+                cv_masks,
+                (x_edges, y_edges),
+            ) = get_xy_rate_maps_cv(
+                spike_rates=spike_rates,
+                locations=locations,
+                base_time=base_time,
+                n_x_bins=d["n_x_bins"],
+                n_y_bins=d["n_y_bins"],
+                velocity_threshold=d["vel_threshold"],
+                filter_vel=d["filter_vel"],
+                cv_count=d["cv_folds"],
+                seed=d["seed"],
+            )
+
+            cv_summary: Dict[str, Any] = {"mode": "xy", "folds": [], "n_folds": int(d["cv_folds"])}
+
+            for cv_idx in range(d["cv_folds"]):
+                print(f"\n=== Decoding CV fold {cv_idx}/{d['cv_folds']-1} (XY) ===")
+                rate_map_xy = rate_maps_xy[cv_idx]
+                if d["smooth_sigma_xy"] and d["smooth_sigma_xy"] > 0:
+                    rate_map_xy = _gaussian_filter_xy(rate_map_xy, (d["smooth_sigma_xy"], d["smooth_sigma_xy"]))
+
+                cv_mask = cv_masks[cv_idx]  # True=train, False=test
+                test_idx = np.where(~cv_mask)[0]
+                print(f"Using CV fold {cv_idx}: decoding {len(test_idx)} held-out bins.")
+
+                spike_counts = (spike_rates[test_idx, :] * d["tau"]).astype(float)
+                avg_vel_all = compute_velocity(locations, base_time)
+                avg_vel = avg_vel_all[test_idx]
+                time_centers = 0.5 * (
+                    base_time[test_idx] + base_time[np.minimum(test_idx + 1, len(base_time) - 1)]
+                )
+
+                if d["save_intermediates"]:
+                    np.save(save_path / f"xy_rate_map_cv{cv_idx}_{d['n_y_bins']}x{d['n_x_bins']}.npy", rate_map_xy)
+                    np.save(save_path / f"cv_mask_xy{cv_idx}_{d['n_y_bins']}x{d['n_x_bins']}.npy", cv_mask)
+                    np.save(save_path / f"xy_occupancy_map_cv{cv_idx}_{d['n_y_bins']}x{d['n_x_bins']}.npy", occupancy_maps_xy[cv_idx])
+
+                decoded_xy, posterior_all = xy_bayesian_decoding(
+                    rate_map_xy=rate_map_xy,
+                    spike_counts=spike_counts,
+                    tau=d["tau"],
+                    avg_vel=avg_vel,
+                    vel_threshold=d["vel_threshold"],
+                    x_edges=x_edges,
+                    y_edges=y_edges,
+                )
+
+                print("Saving decoding outputs…")
+                base = f"decoded_xy_cv{cv_idx}_{d['n_y_bins']}x{d['n_x_bins']}"
+                np.save(save_path / f"{base}.npy", decoded_xy)
+                np.save(save_path / f"{base}_posterior.npy", np.array(posterior_all, dtype=object))
+                np.save(save_path / f"{base}_time_centers.npy", time_centers)
+
+                fold_record: Dict[str, Any] = {
+                    "cv_idx": int(cv_idx),
+                    "n_test_bins": int(len(test_idx)),
+                    "output_prefix": base,
+                }
+
+                eval_res = evaluate_errors_xy(decoded_xy, time_centers, locations, velocity_series, d["vel_threshold"])
+                np.savez_compressed(save_path / f"errors_xy_cv{cv_idx}_{d['n_y_bins']}x{d['n_x_bins']}.npz", **eval_res)
+                print("Saved error analysis:", save_path / f"errors_xy_cv{cv_idx}_{d['n_y_bins']}x{d['n_x_bins']}.npz")
+                fold_record["error_stats"] = eval_res["stats"]
+
+                cv_summary["folds"].append(fold_record)
+
+            with open(save_path / f"cv_summary_xy_{d['n_y_bins']}x{d['n_x_bins']}.json", "w") as f:
+                json.dump(cv_summary, f, indent=2)
+            print("\nWrote CV summary:", save_path / f"cv_summary_xy_{d['n_y_bins']}x{d['n_x_bins']}.json")
+            print(f"\nDone in {(time.time()-t0)/60.0:.2f} min.")
+            return {"mode": "xy", "cv_summary": str(save_path / f"cv_summary_xy_{d['n_y_bins']}x{d['n_x_bins']}.json")}
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Head-direction OR location tuning + Bayesian decoding (Pfeiffer data)"
+        description="Make HD or XY rate maps from Pfieffer and do singular Bayesian decoding."
     )
     parser.add_argument(
         "--data_path",
@@ -603,358 +940,29 @@ def main():
         help="Directory to write outputs",
     )
     parser.add_argument("--rat", type=str, default="1", help="Rat ID (e.g., '1')")
-
-    # Mode
-    parser.add_argument("--mode", type=str, choices=["hd", "xy"], default="hd", help="Decode head direction (hd) or location (xy)")
-
-    # HD params
+    parser.add_argument("--mode", type=str, choices=["hd", "xy"], default="hd",
+                        help="Decode head direction (hd) or location (xy)")
     parser.add_argument("--n_hd_bins", type=int, default=60, help="Number of head-direction bins")
-
-    # XY params
     parser.add_argument("--n_x_bins", type=int, default=30, help="Number of X bins for spatial map (xy mode)")
     parser.add_argument("--n_y_bins", type=int, default=30, help="Number of Y bins for spatial map (xy mode)")
-    parser.add_argument("--arena_pad_cm", type=float, default=0.0, help="Pad inferred arena bounds by this many cm")
-
     parser.add_argument("--tau", type=float, default=0.120, help="Time bin size (s)")
     parser.add_argument("--vel_threshold", type=float, default=5.0, help="Velocity threshold (cm/s)")
-
-    # New: choose number of CV folds (including 0)
-    parser.add_argument("--cv_folds", type=int, default=None, help="Number of CV folds; 0 = no CV. If omitted, you will be prompted.")
-
-    parser.add_argument(
-        "--filter_vel",
-        action="store_true",
-        default=True,
-        help="Filter low-velocity bins",
-    )
+    parser.add_argument("--cv_folds", type=int, default=None,
+                        help="Number of CV folds; 0 = no CV. If omitted, you will be prompted.")
+    parser.add_argument("--filter_vel", action="store_true", default=True, help="Filter low-velocity bins")
     parser.add_argument("--seed", type=int, default=777, help="Random seed")
+    parser.add_argument("--smooth_sigma", type=float, default=2.0,
+                        help="Sigma for Gaussian smoothing of HD curves (in bins; circular)")
+    parser.add_argument("--smooth_sigma_xy", type=float, default=1.0,
+                        help="Sigma (in bins) for Gaussian smoothing of XY maps (applied identically to Y and X)")
+    parser.add_argument("--save_intermediates", action="store_true", default=False,
+                        help="If set, save intermediate artifacts (rate maps, masks, etc.)")
+    return parser
 
-    parser.add_argument(
-        "--smooth_sigma",
-        type=float,
-        default=2.0,
-        help="Sigma for Gaussian smoothing of HD curves (in bins; circular)",
-    )
-    parser.add_argument(
-        "--smooth_sigma_xy",
-        type=float,
-        default=1.0,
-        help="Sigma (in bins) for Gaussian smoothing of XY maps (applied identically to Y and X)",
-    )
-
-    parser.add_argument(
-        "--save_intermediates",
-        action="store_true",
-        default=False,
-        help="If set, save intermediate artifacts (rate maps, masks, etc.)",
-    )
-
-    if args.mode == "hd":
-        args.filter_vel = False
-        args.vel_threshold = 0.0
-
+def main() -> None:
+    parser = _build_parser()
     args = parser.parse_args()
-
-    # Resolve cv_folds, optionally prompt
-    if args.cv_folds is None:
-        try:
-            user_in = input("How many CV folds? (0 = no CV): ").strip()
-            args.cv_folds = int(user_in)
-        except Exception:
-            print("No valid input; defaulting to 0 (no CV).")
-            args.cv_folds = 0
-    if args.cv_folds < 0:
-        raise ValueError("cv_folds must be >= 0")
-
-    data_path = Path(args.data_path) / f"Rat{args.rat}" / "Open1"
-    save_path = Path(args.save_path) / f"Rat{args.rat}"
-    os.makedirs(save_path, exist_ok=True)
-
-    print(f"\n=== {'Head-Direction' if args.mode=='hd' else 'Location (XY)'} Decoding Pipeline ===")
-    print(f"Data path : {data_path}")
-    print(f"Save path : {save_path}")
-    if args.mode == "hd":
-        print(f"HD bins   : {args.n_hd_bins}")
-    else:
-        print(f"XY bins   : {args.n_y_bins} × {args.n_x_bins}")
-    print(f"tau: {args.tau:.3f}s | vel_th: {args.vel_threshold} cm/s | CV folds: {args.cv_folds}")
-
-    t0 = time.time()
-
-    print("\nLoading data…")
-    spike_times_raw, locations, spike_data = load_pfeiffer_data(data_path)
-    excit_list = extract_excitatory_ids(spike_data)
-    print(
-        f"Spikes: {len(spike_times_raw)} | Excitatory neurons: {len(excit_list)} | Position samples: {locations.shape[0]}"
-    )
-
-    base_time = np.arange(spike_times_raw[0, 0], spike_times_raw[-1, 0] + args.tau, args.tau)
-    print(
-        f"Time bins: {len(base_time)-1} bins covering {base_time[0]:.3f}–{base_time[-1]:.3f}s"
-    )
-
-    print("Binning spikes into rates…")
-    spike_rates = build_spike_rates(
-        spike_times_raw, base_time, args.tau, excit_list
-    )  # (T, N)
-
-    velocity_series = compute_velocity_series(locations)
-
-    # ------------------------- No-CV path ------------------------- #
-    if args.cv_folds == 0:
-        if args.mode == "hd":
-            rate_map_hd, occupancy_all, hd_edges = get_hd_rate_map_all(
-                spike_rates=spike_rates,
-                locations=locations,
-                base_time=base_time,
-                n_hd_bins=args.n_hd_bins,
-                velocity_threshold=args.vel_threshold,
-                filter_vel=args.filter_vel,
-            )
-            print("Using ALL-DATA HD tuning; decoding all bins.")
-            spike_counts = (spike_rates * args.tau).astype(float)
-            avg_vel = compute_velocity(locations, base_time)
-            time_centers = 0.5 * (base_time[:-1] + base_time[1:])
-
-            rate_map_hd = _gaussian_filter_hd(rate_map_hd, args.smooth_sigma)
-
-            if args.save_intermediates:
-                np.save(save_path / f"hd_rate_map_{args.n_hd_bins}.npy", rate_map_hd)
-                np.save(save_path / f"hd_occupancy_map_{args.n_hd_bins}.npy", occupancy_all)
-
-            decoded_hd, posterior_all = hd_bayesian_decoding(
-                rate_map_hd=rate_map_hd,
-                spike_counts=spike_counts,
-                tau=args.tau,
-                hd_bins=hd_edges,
-                avg_vel=avg_vel,
-                vel_threshold=args.vel_threshold,
-            )
-
-            print("Saving decoding outputs…")
-            base = f"decoded_hd_{args.n_hd_bins}"
-            np.save(save_path / f"{base}.npy", decoded_hd)
-            np.save(save_path / f"{base}_posterior.npy", np.array(posterior_all, dtype=object))
-            np.save(save_path / f"{base}_time_centers.npy", time_centers)
-
-            eval_res = evaluate_errors(decoded_hd, time_centers, locations, velocity_series, args.vel_threshold)
-            np.savez_compressed(save_path / f"errors_hd_{args.n_hd_bins}.npz", **eval_res)
-            print("Saved error analysis:", save_path / f"errors_hd_{args.n_hd_bins}.npz")
-            print("Error stats:")
-            for k, v in eval_res['stats'].items():
-                print(f"  {k}: {v}")
-
-            ok_hd = decoded_hd[~np.isnan(decoded_hd)]
-            print("\nDecoding Summary:")
-            print(f"Total time bins: {len(decoded_hd)}")
-            print(f"Successfully decoded: {len(ok_hd)} ({100.0 * len(ok_hd) / max(len(decoded_hd),1):.1f}%)")
-            if ok_hd.size:
-                print(f"HD range: {np.min(ok_hd):.1f} – {np.max(ok_hd):.1f} deg")
-
-        else:  # XY
-            rate_map_xy, occupancy_xy, (x_edges, y_edges) = get_xy_rate_map_all(
-                spike_rates=spike_rates,
-                locations=locations,
-                base_time=base_time,
-                n_x_bins=args.n_x_bins,
-                n_y_bins=args.n_y_bins,
-                velocity_threshold=args.vel_threshold,
-                filter_vel=args.filter_vel,
-                arena_pad_cm=args.arena_pad_cm,
-            )
-            print("Using ALL-DATA XY tuning; decoding all bins.")
-            spike_counts = (spike_rates * args.tau).astype(float)
-            avg_vel = compute_velocity(locations, base_time)
-            time_centers = 0.5 * (base_time[:-1] + base_time[1:])
-
-            if args.smooth_sigma_xy and args.smooth_sigma_xy > 0:
-                rate_map_xy = _gaussian_filter_xy(rate_map_xy, (args.smooth_sigma_xy, args.smooth_sigma_xy))
-
-            if args.save_intermediates:
-                np.save(save_path / f"xy_rate_map_{args.n_y_bins}x{args.n_x_bins}.npy", rate_map_xy)
-                np.save(save_path / f"xy_occupancy_map_{args.n_y_bins}x{args.n_x_bins}.npy", occupancy_xy)
-
-            decoded_xy, posterior_all = xy_bayesian_decoding(
-                rate_map_xy=rate_map_xy,
-                spike_counts=spike_counts,
-                tau=args.tau,
-                avg_vel=avg_vel,
-                vel_threshold=args.vel_threshold,
-                x_edges=x_edges,
-                y_edges=y_edges,
-            )
-
-            print("Saving decoding outputs…")
-            base = f"decoded_xy_{args.n_y_bins}x{args.n_x_bins}"
-            np.save(save_path / f"{base}.npy", decoded_xy)
-            np.save(save_path / f"{base}_posterior.npy", np.array(posterior_all, dtype=object))
-            np.save(save_path / f"{base}_time_centers.npy", time_centers)
-
-            eval_res = evaluate_errors_xy(decoded_xy, time_centers, locations, velocity_series, args.vel_threshold)
-            np.savez_compressed(save_path / f"errors_xy_{args.n_y_bins}x{args.n_x_bins}.npz", **eval_res)
-            print("Saved error analysis:", save_path / f"errors_xy_{args.n_y_bins}x{args.n_x_bins}.npz")
-            print("Error stats:")
-            for k, v in eval_res['stats'].items():
-                print(f"  {k}: {v}")
-
-            ok_xy = decoded_xy[~np.isnan(decoded_xy).any(axis=1)]
-            print("\nDecoding Summary:")
-            print(f"Total time bins: {len(decoded_xy)}")
-            print(f"Successfully decoded: {len(ok_xy)} ({100.0 * len(ok_xy) / max(len(decoded_xy),1):.1f}%)")
-
-    # -------------------------- CV path -------------------------- #
-    else:
-        if args.mode == "hd":
-            (
-                rate_maps_hd,
-                occupancy_maps,
-                cv_masks,
-                hd_edges,
-            ) = get_hd_rate_maps_cv(
-                spike_rates=spike_rates,
-                locations=locations,
-                base_time=base_time,
-                n_hd_bins=args.n_hd_bins,
-                velocity_threshold=args.vel_threshold,
-                filter_vel=args.filter_vel,
-                cv_count=args.cv_folds,
-                seed=args.seed,
-            )
-
-            cv_summary: Dict[str, Any] = {"mode": "hd", "folds": [], "n_folds": int(args.cv_folds)}
-
-            for cv_idx in range(args.cv_folds):
-                print(f"\n=== Decoding CV fold {cv_idx}/{args.cv_folds-1} (HD) ===")
-                rate_map_hd = rate_maps_hd[cv_idx]
-                cv_mask = cv_masks[cv_idx]  # True=train, False=test (over T bins)
-                test_idx = np.where(~cv_mask)[0]
-                print(f"Using CV fold {cv_idx}: decoding {len(test_idx)} held-out bins.")
-
-                spike_counts = (spike_rates[test_idx, :] * args.tau).astype(float)
-                avg_vel_all = compute_velocity(locations, base_time)
-                avg_vel = avg_vel_all[test_idx]
-                time_centers = 0.5 * (
-                    base_time[test_idx] + base_time[np.minimum(test_idx + 1, len(base_time) - 1)]
-                )
-
-                # Optional circular smoothing
-                rate_map_hd = _gaussian_filter_hd(rate_map_hd, args.smooth_sigma)
-
-                if args.save_intermediates:
-                    np.save(save_path / f"hd_rate_map_cv{cv_idx}_{args.n_hd_bins}.npy", rate_map_hd)
-                    np.save(save_path / f"cv_mask{cv_idx}_{args.n_hd_bins}.npy", cv_mask)
-                    np.save(save_path / f"hd_occupancy_map_cv{cv_idx}_{args.n_hd_bins}.npy", occupancy_maps[cv_idx])
-
-                decoded_hd, posterior_all = hd_bayesian_decoding(
-                    rate_map_hd=rate_map_hd,
-                    spike_counts=spike_counts,
-                    tau=args.tau,
-                    hd_bins=hd_edges,
-                    avg_vel=avg_vel,
-                    vel_threshold=args.vel_threshold,
-                )
-
-                print("Saving decoding outputs…")
-                base = f"decoded_hd_cv{cv_idx}_{args.n_hd_bins}"
-                np.save(save_path / f"{base}.npy", decoded_hd)
-                np.save(save_path / f"{base}_posterior.npy", np.array(posterior_all, dtype=object))
-                np.save(save_path / f"{base}_time_centers.npy", time_centers)
-
-                fold_record: Dict[str, Any] = {
-                    "cv_idx": int(cv_idx),
-                    "n_test_bins": int(len(test_idx)),
-                    "output_prefix": base,
-                }
-
-                eval_res = evaluate_errors(decoded_hd, time_centers, locations, velocity_series, args.vel_threshold)
-                np.savez_compressed(save_path / f"errors_hd_cv{cv_idx}_{args.n_hd_bins}.npz", **eval_res)
-                print("Saved error analysis:", save_path / f"errors_hd_cv{cv_idx}_{args.n_hd_bins}.npz")
-                fold_record["error_stats"] = eval_res["stats"]
-
-                cv_summary["folds"].append(fold_record)
-
-            with open(save_path / f"cv_summary_hd_{args.n_hd_bins}.json", "w") as f:
-                json.dump(cv_summary, f, indent=2)
-            print("\nWrote CV summary:", save_path / f"cv_summary_hd_{args.n_hd_bins}.json")
-
-        else:
-            (
-                rate_maps_xy,
-                occupancy_maps_xy,
-                cv_masks,
-                (x_edges, y_edges),
-            ) = get_xy_rate_maps_cv(
-                spike_rates=spike_rates,
-                locations=locations,
-                base_time=base_time,
-                n_x_bins=args.n_x_bins,
-                n_y_bins=args.n_y_bins,
-                velocity_threshold=args.vel_threshold,
-                filter_vel=args.filter_vel,
-                cv_count=args.cv_folds,
-                seed=args.seed,
-                arena_pad_cm=args.arena_pad_cm,
-            )
-
-            cv_summary: Dict[str, Any] = {"mode": "xy", "folds": [], "n_folds": int(args.cv_folds)}
-
-            for cv_idx in range(args.cv_folds):
-                print(f"\n=== Decoding CV fold {cv_idx}/{args.cv_folds-1} (XY) ===")
-                rate_map_xy = rate_maps_xy[cv_idx]
-                if args.smooth_sigma_xy and args.smooth_sigma_xy > 0:
-                    rate_map_xy = _gaussian_filter_xy(rate_map_xy, (args.smooth_sigma_xy, args.smooth_sigma_xy))
-
-                cv_mask = cv_masks[cv_idx]  # True=train, False=test
-                test_idx = np.where(~cv_mask)[0]
-                print(f"Using CV fold {cv_idx}: decoding {len(test_idx)} held-out bins.")
-
-                spike_counts = (spike_rates[test_idx, :] * args.tau).astype(float)
-                avg_vel_all = compute_velocity(locations, base_time)
-                avg_vel = avg_vel_all[test_idx]
-                time_centers = 0.5 * (
-                    base_time[test_idx] + base_time[np.minimum(test_idx + 1, len(base_time) - 1)]
-                )
-
-                if args.save_intermediates:
-                    np.save(save_path / f"xy_rate_map_cv{cv_idx}_{args.n_y_bins}x{args.n_x_bins}.npy", rate_map_xy)
-                    np.save(save_path / f"cv_mask_xy{cv_idx}_{args.n_y_bins}x{args.n_x_bins}.npy", cv_mask)
-                    np.save(save_path / f"xy_occupancy_map_cv{cv_idx}_{args.n_y_bins}x{args.n_x_bins}.npy", occupancy_maps_xy[cv_idx])
-
-                decoded_xy, posterior_all = xy_bayesian_decoding(
-                    rate_map_xy=rate_map_xy,
-                    spike_counts=spike_counts,
-                    tau=args.tau,
-                    avg_vel=avg_vel,
-                    vel_threshold=args.vel_threshold,
-                    x_edges=x_edges,
-                    y_edges=y_edges,
-                )
-
-                print("Saving decoding outputs…")
-                base = f"decoded_xy_cv{cv_idx}_{args.n_y_bins}x{args.n_x_bins}"
-                np.save(save_path / f"{base}.npy", decoded_xy)
-                np.save(save_path / f"{base}_posterior.npy", np.array(posterior_all, dtype=object))
-                np.save(save_path / f"{base}_time_centers.npy", time_centers)
-
-                fold_record: Dict[str, Any] = {
-                    "cv_idx": int(cv_idx),
-                    "n_test_bins": int(len(test_idx)),
-                    "output_prefix": base,
-                }
-
-                eval_res = evaluate_errors_xy(decoded_xy, time_centers, locations, velocity_series, args.vel_threshold)
-                np.savez_compressed(save_path / f"errors_xy_cv{cv_idx}_{args.n_y_bins}x{args.n_x_bins}.npz", **eval_res)
-                print("Saved error analysis:", save_path / f"errors_xy_cv{cv_idx}_{args.n_y_bins}x{args.n_x_bins}.npz")
-                fold_record["error_stats"] = eval_res["stats"]
-
-                cv_summary["folds"].append(fold_record)
-
-            with open(save_path / f"cv_summary_xy_{args.n_y_bins}x{args.n_x_bins}.json", "w") as f:
-                json.dump(cv_summary, f, indent=2)
-            print("\nWrote CV summary:", save_path / f"cv_summary_xy_{args.n_y_bins}x{args.n_x_bins}.json")
-
-    print(f"\nDone in {(time.time()-t0)/60.0:.2f} min.")
-
+    decode_solo(args)
 
 if __name__ == "__main__":
     main()
