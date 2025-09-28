@@ -9,3 +9,4 @@ results/anns/*
 **/__pycache__
 ann_datasets/
 *.egg-info
+results/*
