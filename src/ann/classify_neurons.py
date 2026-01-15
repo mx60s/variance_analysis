@@ -12,7 +12,6 @@ from sklearn.preprocessing import MinMaxScaler
 
 from .score_utils import *
 
-_ANN_DATASETS_DIR = Path(__file__).resolve().parent
 
 def classify_neurons(neuron_chart_info):
     """
@@ -129,7 +128,7 @@ def score_neurons(
         sample_partial=False,
         use_old_place_method=True,
         pixel_min_threshold = 20,
-        base_dir=None,
+        base_dir='/',
         n_visits=0
     ):
     """
@@ -161,10 +160,8 @@ def score_neurons(
     model_name = config['model_name'] 
     output_layer = config['output_layer']
 
-    base_dir = base_dir or _ANN_DATASETS_DIR
-
     results_path = (
-        base_dir / "model_activations" / f"{model_name}_{output_layer}"
+        base_dir / "data/ann_activations" / f"{model_name}_{output_layer}"
     )
     results_path.mkdir(parents=True, exist_ok=True)
 

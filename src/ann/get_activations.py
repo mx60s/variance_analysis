@@ -41,8 +41,6 @@ warnings.filterwarnings(
     module=r"torchvision\.io\.image",
 )
 
-MODULE_DIR = Path(__file__).resolve().parent
-
 MC_MEAN = torch.tensor([121.6697, 149.3242, 154.9510]) / 255.0
 MC_STD  = torch.tensor([40.7521,  47.7267, 103.2739]) / 255.0
 
@@ -102,6 +100,7 @@ def _make_predictive_coder(
 
 def load_model(
     model_name   : str,
+    base_path         : Path, 
     output_layer : str | None = None,
     device       : str = "cpu",
 ):
@@ -114,7 +113,7 @@ def load_model(
     """
     if model_name.startswith("vit"):
         repo_id   = "google/vit-base-patch16-224-in21k"
-        cache_dir = MODULE_DIR / "model_zoo" / "vit_b16"
+        cache_dir = base_path / "data/weights/vit_b16"
 
         if model_name == "vit_b16":
             core = ViTModel.from_pretrained(repo_id, cache_dir=cache_dir)
@@ -157,7 +156,7 @@ def load_model(
         return ViTHiddenLayer(core, idx).to(device), preprocess_fn
 
     if model_name.startswith("predictive_coder"):
-        ckpt_path = MODULE_DIR / "predictive_coder.ckpt"
+        ckpt_path = base_path / "data/weights/predictive_coder.ckpt"
 
         model = _make_predictive_coder(
             seq_len=10,
@@ -211,74 +210,81 @@ def _iter_batches(arr: np.ndarray, batch_size: int) -> Iterator[np.ndarray]:
     for i in range(0, len(arr), batch_size):
         yield arr[i : i + batch_size]
 
+from pathlib import Path
+import numpy as np
+import torch
+import torch.nn.functional as F
+from typing import Callable
+from tqdm.auto import tqdm
+
 def get_activations(
     model          : torch.nn.Module,
     preprocess_fn  : Callable[[np.ndarray], torch.Tensor],
-    data           : np.ndarray,                       # (N, H, W, C) 
+    data           : np.ndarray,                       # (N, H, W, C)
     *,
     model_name     : str,
     layer_name     : str,
     batch_size     : int   = 64,
     device         : str   | torch.device = "cpu",
-    max_split_size_gb : float = 2.0,
-    dest_dir       : str   | Path = "model_activations",
-    n_visits       : int = 0,
-    noise_coeff    : float = 0.0
-    
-) -> List[Path]:
+    dest_dir       : str   | Path = "/",
+    noise_coeff    : float = 0.0,
+    # New / simplified controls
+    max_units      : int   = 8000,                     # hard cap
+    sample_seed    : int   = 413,
+) -> Path:
     """
-    Streams images → activations → .npz files.  Automatically splits
-    when an uncompressed buffer exceeds `max_split_size_gb`.
+    Streams images → activations and saves a single acts.npz.
+    If the selected layer has more than `max_units` features per sample, a
+    fixed subset of exactly `max_units` units is chosen on the first batch
+    and reused for all subsequent batches.
+
+    Returns
+    -------
+    Path to the saved acts.npz file.
     """
     device = torch.device(device) if isinstance(device, str) else device
     model.to(device).eval()
 
-    dest_dir = MODULE_DIR / dest_dir
+    dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Saving activations] {dest_dir}")
 
-    split_paths: list[Path] = []
-    split_idx, buf, buf_bytes = 0, [], 0
-    max_bytes = int(max_split_size_gb * (1024**3))
-
-    #  predictive coder wants sequences
+    # predictive coder wants sequences
     is_predictive = model_name.startswith("predictive_coder")
-    seq_len = 1 if is_predictive else None
+    seq_len = 10 if is_predictive else None
 
-    print(data.shape)
+    selected_idx: torch.Tensor | None = None
+    bufs: list[np.ndarray] = []
 
-    if n_visits > 0:
-        for batch_np in tqdm(_iter_batches(data, batch_size)):
-            if is_predictive:
-                batch_np = np.repeat(batch_np[:, None, ...], seq_len, axis=1)
+    for batch_np in tqdm((data[i:i+batch_size] for i in range(0, len(data), batch_size))):
+        if is_predictive:
+            batch_np = np.repeat(batch_np[:, None, ...], seq_len, axis=1)
 
-            print(preprocess_fn(batch_np).shape)
-            out = model(preprocess_fn(batch_np).to(device))
-            print(out.shape)
-            if isinstance(out, dict):                   # torchvision extractor
-                out = next(iter(out.values()))
-            if is_predictive:
-                out = out[:, -1]                        # last timestep
+        x = preprocess_fn(batch_np).to(device)
+        out = model(x)
+        if isinstance(out, dict):                    # torchvision extractor
+            out = next(iter(out.values()))
+        if is_predictive:
+            out = out[:, -1]                         # last timestep
 
-            out_np = out.detach().cpu().numpy()
-            buf.append(out_np)
-            buf_bytes += out_np.nbytes
+        out = out.flatten(1)
 
-            if buf_bytes >= max_bytes:
-                fn = dest_dir / f"acts_{split_idx}.npz"
-                combined = np.concatenate(buf, axis=0).reshape(buf[0].shape[0] * len(buf), -1)
-                np.savez_compressed(fn, activations=combined)
-                split_paths.append(fn)
-                split_idx, buf, buf_bytes = split_idx + 1, [], 0
+        if out.shape[1] > max_units:
+            if selected_idx is None:
+                g = torch.Generator(device=out.device).manual_seed(sample_seed)
+                selected_idx = torch.randperm(out.shape[1], generator=g, device=out.device)[:max_units]
+            out = out.index_select(1, selected_idx)
 
-    # flush remainder
-    if buf:
-        stem = f"acts"
-        if split_paths: stem += f"_{split_idx}"
-        fn = dest_dir / f"{stem}.npz"
-        combined = np.concatenate(buf, axis=0).reshape(buf[0].shape[0] * len(buf), -1)
-        np.savez_compressed(fn, activations=combined)
-        split_paths.append(fn)
+        bufs.append(out.detach().cpu().numpy())
+
+    acts = np.concatenate(bufs, axis=0)  # shape (N, D_sel_or_full)
+    acts_path = dest_dir / "acts.npz"
+    np.savez_compressed(acts_path, activations=acts)
+
+    # Save indices if subsampling happened
+    if selected_idx is not None:
+        np.save(dest_dir / "unit_indices.npy", selected_idx.cpu().numpy())
 
     print("Finished processing model activations.")
-    return split_paths
+    return acts_path
+

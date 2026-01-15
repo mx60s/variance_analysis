@@ -6,6 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import Tuple, List
+import re
 
 def plot_cell_type_pie(
     classifications: Mapping[str, Sequence[int]],
@@ -89,174 +90,224 @@ def plot_cell_type_pie(
         autopct=lambda p: f"{p:.0f}%" if p >= 1 else "",
         textprops={"fontsize": 14},
     )
-    ax.set_title("Neuron‑type composition", fontsize=16)
     ax.set_aspect("equal")  # keep it circular
 
     return fig
 
+def _max_cartesian_axis_index(layout):
+    pat = re.compile(r"^xaxis(\d*)$")
+    m = 1
+    for k in layout:
+        mm = pat.match(k)
+        if mm:
+            idx = int(mm.group(1)) if mm.group(1) else 1
+            m = max(m, idx)
+    return m
+
+def _axis_keys(n):
+    return (f"xaxis{n}" if n>1 else "xaxis", f"yaxis{n}" if n>1 else "yaxis")
+
+def _axis_refs(n):
+    return (f"x{n}" if n>1 else "x", f"y{n}" if n>1 else "y")
+
+def _col_domains(ncols, column_widths, hspace):
+    total_gap = (ncols - 1) * hspace
+    avail = 1.0 - total_gap
+    norm = sum(column_widths)
+    widths = [avail * (w / norm) for w in column_widths]
+    domains = []
+    start = 0.0
+    for i, w in enumerate(widths):
+        end = start + w
+        domains.append((start, end))
+        if i < ncols - 1:
+            start = end + hspace
+    return domains
 
 def plot_neuron_2d_3d(
     activations: np.ndarray,
     neuron_idx: int,
-    axes_names: Tuple[str, str, str] = ("X", "Y", "Z"),
+    axes_names: Tuple[str, str, str] = ("X", "Y", "HD"),
     *,
-    slice_indices: List[int] | None = None,
     n_slices: int = 4,
     z_spacing: float = 1.5,
-    cmap: str = "Hot",
+    cmap: str = "Jet",
     surf_opacity: float = 0.9,
     grid_color: str = "black",
     grid_width: float = 1,
     fig_size: Tuple[int, int] = (1800, 600),
     overall_title: str | None = None,
-    z_label_degrees: bool = False,
+    z_label_degrees: bool = True,
+    firing_rate: bool = False,
+    show_slice_grid: bool = False
 ):
     if activations.ndim != 4:
         raise ValueError("`activations` must be 4-D: (N_neurons, Nx, Ny, Nz)")
 
-    data = activations[neuron_idx]  # (Nx, Ny, Nz)
+    data = activations[neuron_idx]
     nx, ny, nz = data.shape
 
-    if slice_indices is None:
-        slice_indices = np.linspace(0, nz - 1, n_slices, dtype=int).tolist()
+    slice_indices = np.linspace(0, nz - 1, n_slices + 1, dtype=int).tolist()
     slice_indices = sorted(set(slice_indices))
 
-    if z_label_degrees:
-        deg_per_idx = 360.0 / nz
-        tickvals = [idx * z_spacing for idx in slice_indices]
-        ticktext = [f"{idx * deg_per_idx:.0f}°" for idx in slice_indices]
+    def idx_to_deg(z_idx: int) -> float:
+        return (360.0 / nz) * (z_idx % nz)
 
-    cmin, cmax = np.nanmin(data), np.nanmax(data)
+    cmin, cmax = float(np.nanmin(data)), float(np.nanmax(data))
+
+    column_widths = [0.35, 0.33, 0.32]
+    hspace = 0.07
+    x_domains = _col_domains(3, column_widths, hspace)
+    xdom3 = x_domains[2]
+    ydom3 = (0.0, 1.0)
 
     fig = make_subplots(
         rows=1, cols=3,
-        column_widths=[0.3, 0.35, 0.35],
-        specs=[[{"type": "heatmap"}, {"type": "scene"}, {"type": "scene"}]],
-        horizontal_spacing=0.07,
+        column_widths=column_widths,
+        specs=[[{"type": "scene"}, {"type": "heatmap"}, {"type": "heatmap"}]],
+        horizontal_spacing=hspace,
+        subplot_titles=(
+            f"3D heatmap ({axes_names[0]}, {axes_names[1]}, {axes_names[2]})",
+            f"Marginal across {axes_names[2]}",
+            f"Slices conditioned on {axes_names[2]}"
+        ),
     )
 
-    marginal_xy = data.mean(axis=2)
+    X = np.repeat(np.arange(nx), ny * nz)
+    Y = np.tile(np.repeat(np.arange(ny), nz), nx)
+    Z = np.tile(np.arange(nz), nx * ny)
+
+    fig.add_trace(
+        go.Volume(
+            x=X, y=Y, z=Z,
+            value=data.flatten(),
+            opacity=0.10,
+            surface_count=25,
+            colorscale=cmap,
+            cmin=cmin, cmax=cmax,
+            showscale=False,
+            coloraxis="coloraxis"
+        ),
+        row=1, col=1
+    )
+    fig.update_scenes(
+        dict(
+            xaxis=dict(title=axes_names[0], showticklabels=False),
+            yaxis=dict(title=axes_names[1], showticklabels=False),
+            zaxis=dict(title=axes_names[2], showticklabels=False),
+            aspectmode="cube",
+        ),
+        row=1, col=1
+    )
+
+    marginal_xy = np.nanmean(data, axis=2)
     fig.add_trace(
         go.Heatmap(
             z=marginal_xy.T,
             colorscale=cmap,
-            zmin=cmin,
-            zmax=cmax,
+            zmin=cmin, zmax=cmax,
             showscale=False,
-            hovertemplate=f"{axes_names[0]}=%{{x}}<br>{axes_names[1]}=%{{y}}"
-                          "<br>Activation=%{z}<extra></extra>",
-            coloraxis="coloraxis", 
-        ),
-        row=1, col=1
-    )
-    fig.update_xaxes(title_text=axes_names[0], row=1, col=1, showticklabels=False)
-    fig.update_yaxes(title_text=axes_names[1], row=1, col=1, showticklabels=False)
-
-    x2d, y2d = np.meshgrid(np.arange(nx), np.arange(ny), indexing="ij")
-    for k, z_idx in enumerate(slice_indices):
-        z_plane = z_idx * z_spacing
-        z_label = f"{(360.0 / nz) * z_idx:.0f}°" if z_label_degrees else str(z_idx)
-
-        # Surface
-        fig.add_trace(
-            go.Surface(
-                x=x2d,
-                y=y2d,
-                z=np.full_like(x2d, z_plane),
-                surfacecolor=data[:, :, z_idx],
-                colorscale=cmap,
-                cmin=cmin,
-                cmax=cmax,
-                opacity=surf_opacity,
-                showscale=False,
-                hovertemplate=f"{axes_names[2]}={z_label}<extra></extra>",
-                coloraxis="coloraxis",
+            hovertemplate=(
+                f"{axes_names[0]}=%{{x}}<br>"
+                f"{axes_names[1]}=%{{y}}<br>"
+                f"{'Firing rate' if firing_rate else 'Activation'}=%{{z}}"
+                "<extra></extra>"
             ),
-            row=1, col=2
-        )
-
-        # Grid
-        for xi in range(nx):
-            fig.add_trace(
-                go.Scatter3d(
-                    x=[xi] * ny, y=np.arange(ny), z=[z_plane] * ny,
-                    mode="lines",
-                    line=dict(color=grid_color, width=grid_width),
-                    showlegend=False, hoverinfo="skip",
-                ),
-                row=1, col=2
-            )
-        for yi in range(ny):
-            fig.add_trace(
-                go.Scatter3d(
-                    x=np.arange(nx), y=[yi] * nx, z=[z_plane] * nx,
-                    mode="lines",
-                    line=dict(color=grid_color, width=grid_width),
-                    showlegend=False, hoverinfo="skip",
-                ),
-                row=1, col=2
-            )
-
-    zaxis_kwargs_stack = dict(title=axes_names[2])
-    if z_label_degrees:
-        zaxis_kwargs_stack.update(tickvals=tickvals, ticktext=ticktext)
-
-    fig.update_scenes(
-        dict(
-            xaxis=dict(title=axes_names[0], showticklabels=False),
-            yaxis=dict(title=axes_names[1], showticklabels=False),
-            zaxis=zaxis_kwargs_stack,
-            aspectmode="cube",
+            coloraxis="coloraxis",
         ),
         row=1, col=2
     )
+    fig.update_xaxes(title_text=axes_names[0], row=1, col=2, showticklabels=False)
+    fig.update_yaxes(title_text=axes_names[1], row=1, col=2, showticklabels=False)
 
-    fig.add_trace(
-        go.Volume(
-            x=np.repeat(np.arange(nx), ny * nz),
-            y=np.tile(np.repeat(np.arange(ny), nz), nx),
-            z=np.tile(np.arange(nz), nx * ny),
-            value=data.flatten(),
-            opacity=0.1,
-            surface_count=25,
-            colorscale=cmap,
-            cmin=cmin,
-            cmax=cmax,
-            showscale=False,
-            colorbar=dict(title="Activation"),
-            coloraxis="coloraxis",
-        ),
-        row=1, col=3
-    )
+    start_idx = _max_cartesian_axis_index(fig.layout) + 1
+    gap = 0.02
+    total_height = ydom3[1] - ydom3[0]
+    slot_height = (total_height - gap * (n_slices - 1)) / n_slices
 
-    fig.update_scenes(
-        dict(
-            xaxis=dict(title=axes_names[0], showticklabels=False),
-            yaxis=dict(title=axes_names[1], showticklabels=False),
-            zaxis=dict(title=axes_names[2]),
-            aspectmode="cube",
-        ),
-        row=1, col=3
-    )
-    
+    slice_centers = []
+    next_idx = start_idx
+
+    for si in range(len(slice_indices) - 1):
+        y0 = ydom3[0] + si * (slot_height + gap)
+        y1 = y0 + slot_height
+        x0, x1 = xdom3
+
+        xk, yk = _axis_keys(next_idx)
+        xr, yr = _axis_refs(next_idx)
+        next_idx += 1
+
+        fig.layout[xk] = dict(
+            domain=[x0, x1],
+            matches=None,
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False,
+            constrain="domain",
+            scaleratio=1
+        )
+        fig.layout[yk] = dict(
+            domain=[y0, y1],
+            matches=None,
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False,
+            scaleanchor=xr,
+        )
+
+        z_lo, z_hi = slice_indices[si], slice_indices[si+1]
+        z2d = np.nanmean(data[:, :, z_lo:z_hi], axis=2).T
+        #z2d = data[:, :, z_idx].T
+        fig.add_trace(
+            go.Heatmap(
+                z=z2d,
+                colorscale=cmap,
+                zmin=cmin, zmax=cmax,
+                showscale=False,
+                hovertemplate=(
+                    f"{'Firing rate' if firing_rate else 'Activation'}=%{{z}}"
+                    "<extra></extra>"
+                ),
+                coloraxis="coloraxis",
+                xaxis=xr,
+                yaxis=yr,
+            )
+        )
+
+        #slice_centers.append((0.5 * (y0 + y1), z_idx))
+    '''
+    label_x = xdom3[1] + 0.015
+    for ymid, z_idx in slice_centers:
+        label_txt = f"{idx_to_deg(z_idx):.0f}°" if z_label_degrees else str(z_idx)
+        fig.add_annotation(
+            x=label_x, y=ymid,
+            xref="paper", yref="paper",
+            text=label_txt,
+            showarrow=False,
+            font=dict(size=12),
+            align="left"
+        )
+    '''
+
+    fig.update_xaxes(title_text=axes_names[0], row=1, col=2)
+    fig.update_yaxes(title_text=axes_names[1], row=1, col=2)
+
     fig.update_layout(
         coloraxis=dict(
-            cmin=cmin,
-            cmax=cmax,
-            colorscale=cmap,
+            cmin=cmin, cmax=cmax, colorscale=cmap,
             colorbar=dict(
-                title="Activation",
-                x=1.02,           # just outside the last subplot
-                y=0.5,
-                len=0.9,
-                thickness=20
+                title=dict(
+                    text="Firing rate<br>(spikes/s)" if firing_rate else "Activation"
+                ),
+                x=1.02, y=0.5, len=0.9, thickness=20
             )
         ),
-        width=fig_size[0],
-        height=fig_size[1],
-        margin=dict(l=60, r=60, t=80, b=60),
+        width=fig_size[0], height=fig_size[1],
+        margin=dict(l=60, r=100, t=80, b=60),
         title=dict(text=overall_title, x=0.5) if overall_title else None,
     )
 
-    return fig
+    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=3)
+    fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=3)
 
+    return fig
