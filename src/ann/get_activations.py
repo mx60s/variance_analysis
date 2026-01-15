@@ -172,18 +172,40 @@ def load_model(
             x = x.permute(0, 1, 4, 2, 3)
             return (x - MC_MEAN.view(1, 1, 3, 1, 1)) / MC_STD.view(1, 1, 3, 1, 1)
 
-        if output_layer not in {"pre_pred", "post_pred"}:
-            raise ValueError("Predictive coder requires output_layer 'pre_pred' or 'post_pred'")
+        encoder_layers = {'conv1', 'down1', 'down2'}
+        attention_layers = {'pre_pred', 'post_pred'}
 
-        which = 0 if output_layer == "pre_pred" else -1
+        if output_layer in encoder_layers:
+            class EncoderWrapper(torch.nn.Module):
+                def __init__(self, core, layer_name):
+                    super().__init__()
+                    self.core = core
+                    self.layer_name = layer_name
 
-        class ResidualWrapper(torch.nn.Module):
-            def __init__(self, core, which):
-                super().__init__(); self.core = core; self.which = which
-            def forward(self, x):
-                return self.core.get_latents(x, which=self.which)
+                def forward(self, x):
+                    return self.core.get_encoder_latents(x, layer_name=self.layer_name)
 
-        return ResidualWrapper(model, which).to(device), preprocess_fn
+            return EncoderWrapper(model, output_layer).to(device), preprocess_fn
+
+        elif output_layer in attention_layers:
+            which = 0 if output_layer == "pre_pred" else -1
+
+            class ResidualWrapper(torch.nn.Module):
+                def __init__(self, core, which):
+                    super().__init__()
+                    self.core = core
+                    self.which = which
+
+                def forward(self, x):
+                    return self.core.get_latents(x, which=self.which)
+
+            return ResidualWrapper(model, which).to(device), preprocess_fn
+
+        else:
+            raise ValueError(
+                f"Predictive coder requires output_layer in {encoder_layers | attention_layers}, "
+                f"got '{output_layer}'"
+            )
 
     name_map = {
         "vgg16"              : (models.vgg16,   models.VGG16_Weights.IMAGENET1K_V1),

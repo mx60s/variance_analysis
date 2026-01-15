@@ -358,6 +358,39 @@ class Encoder(nn.Module):
 
         return x
 
+    def get_intermediate_activations(self, x: torch.Tensor, layer_name: str) -> torch.Tensor:
+        """
+        Extract activations from intermediate encoder layers.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape (B, C, H, W)
+        layer_name : str
+            One of: 'conv1', 'down1', 'down2'
+
+        Returns
+        -------
+        torch.Tensor
+            Activations at the specified layer
+        """
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = F.relu(x)
+
+        if layer_name == 'conv1':
+            return x
+
+        x = self.maxpool(x)
+
+        x = self.down1(x)
+        if layer_name == 'down1':
+            return x
+
+        x = self.down2(x)
+        return x  # 'down2' or default
+
+
 class Decoder(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, layers: List[int]) -> None:
         super().__init__()
@@ -478,8 +511,36 @@ class PredictiveCoder(nn.Module):
             residual = f
             f = self.ffn_2(f) + residual
             f = F.layer_norm(f, f.shape[1:])
-    
+
             return f
+
+    def get_encoder_latents(self, x: torch.Tensor, layer_name: str = 'down2') -> torch.Tensor:
+        """
+        Extract activations from encoder intermediate layers.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input of shape (B, L, C, H, W) - batch of sequences
+        layer_name : str
+            One of: 'conv1', 'down1', 'down2'
+
+        Returns
+        -------
+        torch.Tensor
+            Activations at specified layer, shape (B, L, C', H', W')
+        """
+        with torch.no_grad():
+            B, L, C, H, W = x.shape
+            x = x.reshape(B * L, C, H, W)
+
+            f = self.encoder.get_intermediate_activations(x, layer_name)
+
+            _, C_out, H_out, W_out = f.shape
+            f = f.reshape(B, L, C_out, H_out, W_out)
+
+            return f
+
 
 class VestibularCoder(nn.Module):
     def __init__(

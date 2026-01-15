@@ -311,3 +311,82 @@ def plot_neuron_2d_3d(
     fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=3)
 
     return fig
+
+
+def visualize_conv1_filters(
+    model,
+    *,
+    figsize: Tuple[int, int] = (12, 8),
+    ncols: int = 8,
+    normalize: bool = True,
+    title: str = "Conv1 Filters (7x7)",
+) -> plt.Figure:
+    """
+    Visualize the learned conv1 filters from a PredictiveCoder encoder.
+
+    These 7x7 filters typically learn Gabor-like oriented edge detectors,
+    similar to V1 simple cells - demonstrating these are visual features.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        PredictiveCoder or wrapper with encoder.conv1 weights
+    figsize : tuple
+        Figure size in inches
+    ncols : int
+        Number of columns in the filter grid
+    normalize : bool
+        Whether to normalize each filter to [0, 1] for display
+    title : str
+        Figure title
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    import torch
+
+    # Extract conv1 weights: (out_channels, in_channels, H, W) = (64, 3, 7, 7)
+    if hasattr(model, 'encoder'):
+        weights = model.encoder.conv1.weight.detach().cpu().numpy()
+    elif hasattr(model, 'core') and hasattr(model.core, 'encoder'):
+        weights = model.core.encoder.conv1.weight.detach().cpu().numpy()
+    else:
+        raise ValueError("Cannot find encoder.conv1 in model")
+
+    n_filters = weights.shape[0]  # 64
+    nrows = int(np.ceil(n_filters / ncols))
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    axes = axes.flatten()
+
+    for i in range(n_filters):
+        ax = axes[i]
+
+        # Get filter: (in_channels, H, W) e.g. (3, 7, 7)
+        filt = weights[i]
+
+        # Show as RGB if 3 input channels
+        if filt.shape[0] == 3:
+            # Transpose to (H, W, C) for RGB display
+            filt_rgb = np.transpose(filt, (1, 2, 0))
+            if normalize:
+                filt_rgb = (filt_rgb - filt_rgb.min()) / (filt_rgb.max() - filt_rgb.min() + 1e-8)
+            ax.imshow(filt_rgb)
+        else:
+            # Grayscale: average across input channels
+            filt_gray = filt.mean(axis=0)
+            if normalize:
+                filt_gray = (filt_gray - filt_gray.min()) / (filt_gray.max() - filt_gray.min() + 1e-8)
+            ax.imshow(filt_gray, cmap='gray')
+
+        ax.axis('off')
+
+    # Hide unused subplots
+    for i in range(n_filters, len(axes)):
+        axes[i].axis('off')
+
+    fig.suptitle(title, fontsize=14)
+    fig.tight_layout()
+
+    return fig

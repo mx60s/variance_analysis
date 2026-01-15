@@ -855,6 +855,57 @@ def compute_chance_error_analytical_xy(
     }
 
 
+def compute_no_prior_chance_hd() -> Dict[str, float]:
+    """
+    Compute expected error for HD/MD decoding with no prior (uniform random guessing).
+
+    If we guess uniformly at random from [0, 360), the expected absolute
+    circular error is exactly 90 degrees.
+
+    Derivation: The absolute circular error is uniformly distributed on [0, 180],
+    so E[|error|] = 90.
+    """
+    return {
+        'no_prior_expected_mae_deg': 90.0,
+        'description': 'Uniform random guessing over [0, 360) degrees'
+    }
+
+
+def compute_no_prior_chance_xy(
+    x_edges: np.ndarray,
+    y_edges: np.ndarray,
+) -> Dict[str, float]:
+    """
+    Compute expected error for XY decoding with no prior (uniform random guessing).
+
+    For a square environment of side L, the expected Euclidean distance between
+    two uniformly random points is approximately 0.5214 * L.
+
+    Exact formula: L * (2 + sqrt(2) + 5*log(1+sqrt(2))) / 15
+    """
+    import math
+
+    L_x = x_edges[-1] - x_edges[0]
+    L_y = y_edges[-1] - y_edges[0]
+
+    # For a square, use the exact formula
+    # For a rectangle, use average of the two dimensions as approximation
+    L = (L_x + L_y) / 2.0
+
+    # Exact coefficient for square: (2 + sqrt(2) + 5*ln(1+sqrt(2))) / 15 ≈ 0.5214
+    sqrt2 = math.sqrt(2)
+    coeff = (2 + sqrt2 + 5 * math.log(1 + sqrt2)) / 15
+
+    expected_error = coeff * L
+
+    return {
+        'no_prior_expected_mae_cm': float(expected_error),
+        'environment_size_x_cm': float(L_x),
+        'environment_size_y_cm': float(L_y),
+        'description': 'Uniform random guessing over environment'
+    }
+
+
 def decode_solo(
     dataset: int,
     rat: str,
@@ -1166,6 +1217,18 @@ def decode_solo(
 
     with open(save_root / "cv_summary_all.json", "w") as f:
         json.dump(cv_summary_all, f, indent=2)
+
+    # Compute and save no-prior (uniform) chance baselines
+    no_prior_hd = compute_no_prior_chance_hd()
+    no_prior_xy = compute_no_prior_chance_xy(x_edges, y_edges)
+    no_prior_chance = {
+        'hd': no_prior_hd,
+        'md': no_prior_hd,  # Same as HD since both are angular [0, 360)
+        'xy': no_prior_xy,
+    }
+    with open(save_root / "no_prior_chance.json", "w") as f:
+        json.dump(no_prior_chance, f, indent=2)
+    print(f"\nNo-prior chance baselines: HD/MD={no_prior_hd['no_prior_expected_mae_deg']:.1f}°, XY={no_prior_xy['no_prior_expected_mae_cm']:.1f}cm")
 
     print("\n Finished all decoding with HD-based neuron filtering.")
     if run_chance_decoding:
