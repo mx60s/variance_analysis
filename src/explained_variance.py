@@ -66,42 +66,71 @@ def get_splits(visits, min_visits=2, cap=False, seed=None):
   return total_mean, fold0_mean, fold1_mean, fold0_occ, fold1_occ
 
 
-def quantify_variance(heatmap_fold0, heatmap_fold1, occupancy, axis=0, verbose=False):
+from numba import njit
+
+@njit
+def _corr_matrix(fold0, fold1):
+    """Compute pairwise cross-fold correlation matrix with per-pair validity."""
+    n_slices = fold0.shape[0]
+    n_bins = fold0.shape[1]
+    corr_matrix = np.full((n_slices, n_slices), np.nan)
+
+    for i in range(n_slices):
+        for j in range(n_slices):
+            # Find mutually valid bins
+            sum_a = 0.0
+            sum_b = 0.0
+            count = 0
+            for k in range(n_bins):
+                ai = fold0[i, k]
+                bj = fold1[j, k]
+                if ai == ai and bj == bj:  # NaN check
+                    sum_a += ai
+                    sum_b += bj
+                    count += 1
+            if count < 3:
+                continue
+
+            mean_a = sum_a / count
+            mean_b = sum_b / count
+
+            num = 0.0
+            ss_a = 0.0
+            ss_b = 0.0
+            for k in range(n_bins):
+                ai = fold0[i, k]
+                bj = fold1[j, k]
+                if ai == ai and bj == bj:
+                    da = ai - mean_a
+                    db = bj - mean_b
+                    num += da * db
+                    ss_a += da * da
+                    ss_b += db * db
+
+            denom = (ss_a * ss_b) ** 0.5
+            if denom > 0:
+                corr_matrix[i, j] = num / denom
+
+    return corr_matrix
+
+
+def quantify_variance_corr(heatmap_fold0, heatmap_fold1, occupancy, axis=0, min_occ=0, verbose=False):
     occ = occupancy / 2
-    est_spikes0 = heatmap_fold0 * occ
-    est_spikes1 = heatmap_fold1 * occ
+    mask = occ > min_occ
+    fold0 = np.where(mask, heatmap_fold0, np.nan)
+    fold1 = np.where(mask, heatmap_fold1, np.nan)
 
-    total_time   = np.nansum(occ, axis=axis, keepdims=True)
-    total_spikes_0 = np.nansum(est_spikes0, axis=axis, keepdims=True)
-    fold0_mean = np.divide(total_spikes_0, total_time,
-                          out=np.full_like(total_spikes_0, np.nan),
-                          where=total_time > 0)
+    fold0 = np.moveaxis(fold0, axis, 0).reshape(fold0.shape[axis], -1).copy()
+    fold1 = np.moveaxis(fold1, axis, 0).reshape(fold1.shape[axis], -1).copy()
 
-    total_spikes_1 = np.nansum(est_spikes1, axis=axis, keepdims=True)
-    fold1_mean = np.divide(total_spikes_1, total_time,
-                          out=np.full_like(total_spikes_1, np.nan),
-                          where=total_time > 0)
+    corr_matrix = _corr_matrix(fold0, fold1)
 
-    n_bins = heatmap_fold1.shape[axis]
-
-    inter_var_fold1 = np.nansum((heatmap_fold1 - fold1_mean)**2)
-    inter_var_fold0 = np.nansum((heatmap_fold0 - fold0_mean)**2)
-
-    intra_var_all = np.nansum((heatmap_fold1 - heatmap_fold0)**2)
-    intra_var_means = n_bins * np.nansum((fold1_mean - fold0_mean)**2)
+    reliability = np.nanmean(np.diag(corr_matrix))
+    off_diag = ~np.eye(corr_matrix.shape[0], dtype=bool)
+    variation = np.nanmean(corr_matrix[off_diag])
 
     if verbose:
-        print(f"axis={axis} sum((fold1 - fold1_mean)^2)={inter_var_fold1:.4f}")
-        print(f"axis={axis} sum((fold0 - fold0_mean)^2)={inter_var_fold0:.4f}")
-        print(f"axis={axis} sum((fold1 - fold0)^2)={intra_var_all:.4f}")
-        print(f"axis={axis} n_bins * sum((fold1_mean - fold0_mean)^2)={intra_var_means:.4f}")
-        print()
+        print(f"axis={axis}  reliability={reliability:.4f}  "
+              f"variation={variation:.4f}")
 
-    estimator = 0.5 * (
-        inter_var_fold1 +
-        inter_var_fold0 -
-        intra_var_all +
-        intra_var_means
-    )
-
-    return estimator, inter_var_fold1, inter_var_fold0, intra_var_all, intra_var_means
+    return variation, reliability
