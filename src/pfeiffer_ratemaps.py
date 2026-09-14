@@ -28,6 +28,30 @@ def compute_velocity(locations: np.ndarray, base_time: np.ndarray) -> np.ndarray
     return v
 
 
+def _nearest_edge_indices(base_time: np.ndarray, times: np.ndarray) -> np.ndarray:
+    """Vectorised equivalent of [np.abs(base_time - t).argmin() for t in times]
+    (nearest edge; exact ties resolve to the lower index, as argmin does)."""
+    times = np.asarray(times, dtype=float)
+    i = np.searchsorted(base_time, times)
+    i = np.clip(i, 1, len(base_time) - 1)
+    left = i - 1
+    choose_left = (times - base_time[left]) <= (base_time[i] - times)
+    return np.where(choose_left, left, i).astype(int)
+
+
+def _fast_bin_mask(base_time: np.ndarray, loc_idx: np.ndarray, fast_bins: np.ndarray,
+                   timebin_tol: float) -> np.ndarray:
+    """Equivalent of np.any(np.isclose(base_time[loc_idx, None], fast_bins, atol=tol), axis=1)
+    without materialising the (n_samples x n_fast_bins) matrix. fast_bins is sorted (a subset
+    of base_time), so nearest-neighbour distance decides membership."""
+    fb = np.sort(np.asarray(fast_bins, dtype=float))
+    t = base_time[loc_idx]
+    j = np.clip(np.searchsorted(fb, t), 0, len(fb) - 1)
+    jl = np.clip(j - 1, 0, len(fb) - 1)
+    d = np.minimum(np.abs(fb[j] - t), np.abs(fb[jl] - t))
+    return d <= timebin_tol + 1e-8 * np.abs(t)   # np.isclose default rtol is 1e-5 on |b|; tighten but keep atol
+
+
 def _select_time_indices_in_hd_bin(
     locations: np.ndarray,
     base_time: np.ndarray,
@@ -41,10 +65,10 @@ def _select_time_indices_in_hd_bin(
         return np.array([], dtype=int)
 
     loc_times = locations[in_hd, 0]
-    loc_idx = np.array([int(np.abs(base_time - t).argmin()) for t in loc_times], dtype=int)
+    loc_idx = _nearest_edge_indices(base_time, loc_times)
 
     if fast_bins is not None and fast_bins.size:
-        mask = np.any(np.isclose(base_time[loc_idx, None], fast_bins, atol=timebin_tol), axis=1)
+        mask = _fast_bin_mask(base_time, loc_idx, fast_bins, timebin_tol)
         loc_idx = loc_idx[mask]
 
     T = len(base_time) - 1
@@ -69,10 +93,10 @@ def _select_time_indices_in_xy_bin(
         return np.array([], dtype=int)
 
     loc_times = locations[in_xy, 0]
-    loc_idx = np.array([int(np.abs(base_time - t).argmin()) for t in loc_times], dtype=int)
+    loc_idx = _nearest_edge_indices(base_time, loc_times)
 
     if fast_bins is not None and fast_bins.size:
-        mask = np.any(np.isclose(base_time[loc_idx, None], fast_bins, atol=timebin_tol), axis=1)
+        mask = _fast_bin_mask(base_time, loc_idx, fast_bins, timebin_tol)
         loc_idx = loc_idx[mask]
 
     T = len(base_time) - 1

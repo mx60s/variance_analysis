@@ -15,8 +15,28 @@ A very condensed definition for the predictive coder model.
 # Attention definitions from https://github.com/jgornet/predictive-coding-recovers-maps/blob/main/predictive_coding/models/attention.py
 # --------------------------------------
 
-from xformers.ops import memory_efficient_attention as sdpa_attention
-from xformers.ops import LowerTriangularMask
+try:
+    from xformers.ops import memory_efficient_attention as sdpa_attention
+    from xformers.ops import LowerTriangularMask
+except ImportError:
+    # Fallback for environments without xformers (e.g. Apple Silicon, where no wheel
+    # is available). PyTorch's native scaled_dot_product_attention is numerically
+    # equivalent (same 1/sqrt(d) scale, same causal masking); only the tensor layout
+    # differs: xformers uses [B, M, H, K], torch SDPA uses [B, H, M, K].
+    class LowerTriangularMask:
+        """Marker for causal attention; xformers-compatible stand-in."""
+        pass
+
+    def sdpa_attention(query, key, value, attn_bias=None, p=0.0, scale=None):
+        is_causal = isinstance(attn_bias, LowerTriangularMask)
+        attn_mask = None if (is_causal or attn_bias is None) else attn_bias
+        q = query.transpose(1, 2).contiguous()   # [B, M, H, K] -> [B, H, M, K]
+        k = key.transpose(1, 2).contiguous()
+        v = value.transpose(1, 2).contiguous()
+        out = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=attn_mask, dropout_p=p, is_causal=is_causal, scale=scale
+        )
+        return out.transpose(1, 2).contiguous()  # [B, H, M, K] -> [B, M, H, K]
 
 
 class MultiHeadAttention(nn.Module):

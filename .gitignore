@@ -10,3 +10,18 @@ results/anns/*
 ann_datasets/
 *.egg-info
 results/*
+
+# added 2026-09-14: keep data, results, logs, envs and build products out of the repo
+data/
+results/
+logs/
+.venv/
+*.zip
+figs/*.svg
+Spatial_maps_in_CNNs/manuscript.pdf
+Spatial_maps_in_CNNs/upload_*/
+Spatial_maps_in_CNNs/*.log
+Spatial_maps_in_CNNs/*.aux
+Spatial_maps_in_CNNs/*.bbl
+Spatial_maps_in_CNNs/*.blg
+Spatial_maps_in_CNNs/*.out
