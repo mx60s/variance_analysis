@@ -1,0 +1,462 @@
+{
+  "inspection_date": "2026-09-14",
+  "repo_root": "/Users/moo/variance_analysis",
+  "git_head": "c04cac25e7f3faafbe7113f8e97dd5745a6a33ef",
+  "git_status_at_inspection": "clean",
+  "scope": "Read-only existence, size, selected hashes and NumPy headers. No array contents, checkpoint weights, model execution, training, or biological analysis reproduced. Directory samples are non-exhaustive.",
+  "items": [
+    {
+      "path": "Spatial_maps_in_CNNs/manuscript.tex",
+      "exists": true,
+      "bytes": 115206,
+      "sha256": "5c133be17284a7a435a85185e6d456041b74c9f6df2a7465695ff265e8dc2d7b"
+    },
+    {
+      "path": "Spatial_maps_in_CNNs/manuscript.pdf",
+      "exists": true,
+      "bytes": 8764387,
+      "sha256": "7e8f5d056e6ec626238ecd3fab7f46e2a5e944a9616efc9ea86ca17e5c3febf7"
+    },
+    {
+      "path": "Spatial_maps_in_CNNs/map.bib",
+      "exists": true,
+      "bytes": 193764,
+      "sha256": "a8c9b9a1bbe0e22253a40d84cb7327b16d381f6999f0f35f009411fe796f67b9"
+    },
+    {
+      "path": "README.md",
+      "exists": true,
+      "bytes": 908,
+      "sha256": "ab8e499269c1cb1f5c84a6d45b1f083917592e9b7b187bdeadb4c93fa66593d1"
+    },
+    {
+      "path": "pyproject.toml",
+      "exists": true,
+      "bytes": 202,
+      "sha256": "31a245bd4b503ac396cd2e6e71c10cd86f79f4ff9396c864b20d4d020e0d1242"
+    },
+    {
+      "path": "setup.py",
+      "exists": true,
+      "bytes": 436,
+      "sha256": "b308501a82f3b00895e0ed82f3078f87cd0ab1eb3abad7005cfa352824edba17"
+    },
+    {
+      "path": "notebooks/bio_neurons.ipynb",
+      "exists": true,
+      "bytes": 52025,
+      "sha256": "8a96dadc89b738d11672e933e042bf858b27ed9e8d25520a48a2293cea4d1e96"
+    },
+    {
+      "path": "notebooks/model_neurons.ipynb",
+      "exists": true,
+      "bytes": 56062,
+      "sha256": "2fa74c7d1c26d6d56e588d399cd4c06a551c079cf7c3817c405b5136bc3a162a"
+    },
+    {
+      "path": "notebooks/glm.ipynb",
+      "exists": true,
+      "bytes": 13766,
+      "sha256": "8ec520c84a581465bc1eb681693051bccfdd5e4954beead9b72abb03db205bb0"
+    },
+    {
+      "path": "notebooks/marginals_example.ipynb",
+      "exists": true,
+      "bytes": 164465,
+      "sha256": "fe5c4a3f6a2a562a092d2fadb885d46432648deb6eaaf5f84aadb27a122efe99"
+    },
+    {
+      "path": "src/explained_variance.py",
+      "exists": true,
+      "bytes": 4205,
+      "sha256": "1215d4bdf6e50de71a14f54ec8c6df3294883d7555d0a931bc33e19ead163540"
+    },
+    {
+      "path": "src/ann/get_activations.py",
+      "exists": true,
+      "bytes": 10173,
+      "sha256": "2c75e623b337370661538edc49f5a397056244f33709dea906c50aeacf762df6"
+    },
+    {
+      "path": "src/ann/predictive_coder.py",
+      "exists": true,
+      "bytes": 23677,
+      "sha256": "7fac8dac49673185f786d1ddc086f28263f860f4dc0c1f233359eae49759cb35"
+    },
+    {
+      "path": "src/ann/classify_neurons.py",
+      "exists": true,
+      "bytes": 12201,
+      "sha256": "aa2e335358a97b5d8991af7b8365794c0b252bffaff32f25d4071a472f2abce7"
+    },
+    {
+      "path": "src/ann/score_utils.py",
+      "exists": true,
+      "bytes": 9482,
+      "sha256": "2316d4f0cf5c21153e75dd7bb29f41e96ab0c40f44187e0dbfa7832840a59b41"
+    },
+    {
+      "path": "src/pfeiffer_ratemaps.py",
+      "exists": true,
+      "bytes": 11404,
+      "sha256": "47889c098074e8643c5e9a84782724d2cedff9971cfd458b4fd59b0865c4154b"
+    },
+    {
+      "path": "src/dusz_ratemaps.py",
+      "exists": true,
+      "bytes": 20110,
+      "sha256": "6f4413ddc86267b09049636ae2b45ad092661b6312fc0060fc0295916f161f67"
+    },
+    {
+      "path": "src/pfeiffer_decode_solo.py",
+      "exists": true,
+      "bytes": 39742,
+      "sha256": "e3a37e176334123a2d79ed9dcdf65b33251dc04e81c4026180e7bd9defbb0556"
+    },
+    {
+      "path": "src/dusz_decode_solo.py",
+      "exists": true,
+      "bytes": 51965,
+      "sha256": "6a44e4d9bf7aee507d005a5d8221ce41a082daa8bc99fc11dc785b48507113b3"
+    },
+    {
+      "path": "data/weights/predictive_coder.ckpt",
+      "exists": true,
+      "bytes": 6128789,
+      "sha256": "153de6a6c75112fc623ca3c42dc6aab7c894f678cf901b6cbe6c123b104b16b9"
+    },
+    {
+      "path": "data/ann_activations/predictive_coder_pre_pred_panorama_pitch/acts.npz",
+      "exists": true,
+      "bytes": 1861424722,
+      "array_headers": {
+        "activations.npy": {
+          "descr": "<f4",
+          "fortran_order": false,
+          "shape": [
+            289,
+            360,
+            8000
+          ]
+        },
+        "locations.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            289,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "path": "data/ann_activations/predictive_coder_pre_pred_panorama_clean/acts.npz",
+      "exists": true,
+      "bytes": 463638643,
+      "array_headers": {
+        "activations.npy": {
+          "descr": "<f4",
+          "fortran_order": false,
+          "shape": [
+            289,
+            90,
+            8000
+          ]
+        },
+        "locations.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            289,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "path": "data/ann_activations/predictive_coder_post_pred_panorama_clean/acts.npz",
+      "exists": true,
+      "bytes": 771820027,
+      "array_headers": {
+        "activations.npy": {
+          "descr": "<f4",
+          "fortran_order": false,
+          "shape": [
+            289,
+            90,
+            8000
+          ]
+        },
+        "locations.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            289,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "path": "data/ann_activations/predictive_coder_pre_pred/acts.npz",
+      "exists": true,
+      "bytes": 87572771,
+      "array_headers": {
+        "activations.npy": {
+          "descr": "<f4",
+          "fortran_order": false,
+          "shape": [
+            4913,
+            8000
+          ]
+        }
+      }
+    },
+    {
+      "path": "results/ann/predictive_coder_pre_pred/ev_all_neurons_pitch_corr.npz",
+      "exists": true,
+      "bytes": 136754,
+      "sha256": "928c6b2292eebba117e628ce71cce2e4aa7e8453aadf31480c71e8ecd01a5ea3",
+      "array_headers": {
+        "ev_xy.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            8000
+          ]
+        },
+        "ev_hd.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            8000
+          ]
+        },
+        "is_place.npy": {
+          "descr": "|b1",
+          "fortran_order": false,
+          "shape": [
+            8000
+          ]
+        }
+      }
+    },
+    {
+      "path": "results/ann/predictive_coder_pre_pred/ev_all_neurons_pitch.npz",
+      "exists": true,
+      "bytes": 137012,
+      "sha256": "f470ad1714723edf19a4e14dda5f28501eb46edf301bf1d8adade287716bd2c5",
+      "array_headers": {
+        "ev_xy.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            8000
+          ]
+        },
+        "ev_hd.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            8000
+          ]
+        },
+        "is_place.npy": {
+          "descr": "|b1",
+          "fortran_order": false,
+          "shape": [
+            8000
+          ]
+        },
+        "n_neurons.npy": {
+          "descr": "<i8",
+          "fortran_order": false,
+          "shape": []
+        }
+      }
+    },
+    {
+      "path": "results/rodents/pfeiffer/Rat1/fold0_xyhd_20x20x60.npz",
+      "exists": true,
+      "bytes": 338053,
+      "sha256": "e93dec102efa49bdc8c43540265039c898be03006890b0072427d2aa4fbb5dab",
+      "array_headers": {
+        "rate_map.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            20,
+            20,
+            60,
+            204
+          ]
+        },
+        "occupancy.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            20,
+            20,
+            60
+          ]
+        },
+        "x_edges.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            21
+          ]
+        },
+        "y_edges.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            21
+          ]
+        },
+        "hd_edges.npy": {
+          "descr": "<f8",
+          "fortran_order": false,
+          "shape": [
+            61
+          ]
+        }
+      }
+    },
+    {
+      "path": "results/rodents/pfeiffer/Rat1/xyhd_20x20x60_meta.json",
+      "exists": true,
+      "bytes": 102,
+      "sha256": "87808ec9b263e9eb1a94a96ea7192a059020be48adaf80008309097665960da0"
+    },
+    {
+      "path": "data/rodents/pfeiffer/Rat1",
+      "exists": true,
+      "sample_children": [
+        "Open1/",
+        "Open2/"
+      ]
+    },
+    {
+      "path": "data/rodents/dusz/Dataset_1",
+      "exists": true,
+      "sample_children": [
+        "A3701-191119/",
+        "A3702-191126/",
+        "A3703-191215/",
+        "A3705-200306/",
+        "A3706-200313/",
+        "A3707-200317/",
+        "A3708-200317b/",
+        "A3709-200601/",
+        "A3710-200609/",
+        "A3711-200810b/",
+        "A3712-200903a/",
+        "A3713-200909a/",
+        "A3716-201015b/",
+        "A3717-201021/",
+        "A3723-201115/",
+        "A3728-210309b/",
+        "A3730-210323b/"
+      ]
+    },
+    {
+      "path": "data/rodents/dusz/Dataset_2",
+      "exists": true,
+      "sample_children": [
+        "A1808-190807/",
+        "A1813-190408/",
+        "A1815-190523/",
+        "A1821-190910/",
+        "A1824-190827/",
+        "A5505-200831/",
+        "A5506-200914a/",
+        "A5507-200920/",
+        "A5508-200930/",
+        "A5801-200924/",
+        "A6211-210407/",
+        "A6215-210610/",
+        "A6216-210623/",
+        "A9701-210805/"
+      ]
+    },
+    {
+      "path": "data/minecraft/panorama-90yaw",
+      "exists": true,
+      "sample_children": [
+        "loc_+120.5_+197.5.npz",
+        "loc_+120.5_+198.5.npz",
+        "loc_+120.5_+199.5.npz",
+        "loc_+120.5_+200.5.npz",
+        "loc_+120.5_+201.5.npz",
+        "loc_+120.5_+202.5.npz",
+        "loc_+120.5_+203.5.npz",
+        "loc_+120.5_+204.5.npz",
+        "loc_+120.5_+205.5.npz",
+        "loc_+120.5_+206.5.npz",
+        "loc_+120.5_+207.5.npz",
+        "loc_+120.5_+208.5.npz",
+        "loc_+120.5_+209.5.npz",
+        "loc_+120.5_+210.5.npz",
+        "loc_+120.5_+211.5.npz",
+        "loc_+120.5_+212.5.npz",
+        "loc_+120.5_+213.5.npz",
+        "loc_+121.5_+197.5.npz",
+        "loc_+121.5_+198.5.npz",
+        "loc_+121.5_+199.5.npz"
+      ]
+    },
+    {
+      "path": "data/minecraft/panorama-90yaw-pitch",
+      "exists": true,
+      "sample_children": [
+        "loc_+120.5_+197.5.npz",
+        "loc_+120.5_+198.5.npz",
+        "loc_+120.5_+199.5.npz",
+        "loc_+120.5_+200.5.npz",
+        "loc_+120.5_+201.5.npz",
+        "loc_+120.5_+202.5.npz",
+        "loc_+120.5_+203.5.npz",
+        "loc_+120.5_+204.5.npz",
+        "loc_+120.5_+205.5.npz",
+        "loc_+120.5_+206.5.npz",
+        "loc_+120.5_+207.5.npz",
+        "loc_+120.5_+208.5.npz",
+        "loc_+120.5_+209.5.npz",
+        "loc_+120.5_+210.5.npz",
+        "loc_+120.5_+211.5.npz",
+        "loc_+120.5_+212.5.npz",
+        "loc_+120.5_+213.5.npz",
+        "loc_+121.5_+197.5.npz",
+        "loc_+121.5_+198.5.npz",
+        "loc_+121.5_+199.5.npz"
+      ]
+    },
+    {
+      "path": "data/minecraft/small_world_r17",
+      "exists": true,
+      "sample_children": [
+        ".ipynb_checkpoints/",
+        "0.png",
+        "1.png",
+        "10.png",
+        "1000.png",
+        "1001.png",
+        "1002.png",
+        "1048.png",
+        "1093.png",
+        "11.png",
+        "1105.png",
+        "1106.png",
+        "1107.png",
+        "1108.png",
+        "1109.png",
+        "1110.png",
+        "1111.png",
+        "1112.png",
+        "1113.png",
+        "1114.png"
+      ]
+    }
+  ]
+}

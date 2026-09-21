@@ -1,0 +1,237 @@
+{
+  "note": "Small mathematical audit; no training and no changes to original analysis.\n\nRun with Python and NumPy. AST-load the repository's exact\nget_splits/_corr_matrix/quantify_variance_corr functions, removing only the njit\ndecorator so this standalone audit does not require SciPy or Numba. Preprocessing\nfunctions requiring SciPy are NOT run. Output is not regenerated paper data.\nUndefined numeric results are serialized as JSON null.\n",
+  "exact_counterexamples": {
+    "additive": {
+      "0": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      },
+      "1": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      }
+    },
+    "multiplicative": {
+      "0": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      },
+      "1": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      }
+    },
+    "pure_x": {
+      "0": {
+        "raw_EV": null,
+        "reliability": null
+      },
+      "1": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      }
+    },
+    "pure_noise": {
+      "0": {
+        "raw_EV": 0.9768195901809097,
+        "reliability": 0.021283243751847158
+      },
+      "1": {
+        "raw_EV": 1.0044659220409586,
+        "reliability": -0.0005346752589526563
+      }
+    },
+    "crossover_interaction": {
+      "0": {
+        "raw_EV": 1.0909090909090908,
+        "reliability": 1.0
+      },
+      "1": {
+        "raw_EV": 1.032258064516129,
+        "reliability": 1.0
+      }
+    }
+  },
+  "pure_x_perturbation": {
+    "0.0001": {
+      "0": {
+        "raw_EV": 1.0067881818874795,
+        "reliability": -0.0201316166646148
+      },
+      "1": {
+        "raw_EV": 6.839651067735986e-10,
+        "reliability": 0.999999999294209
+      }
+    },
+    "0.1": {
+      "0": {
+        "raw_EV": 1.0025638596420023,
+        "reliability": -0.03979963903691353
+      },
+      "1": {
+        "raw_EV": 0.0006843009721223536,
+        "reliability": 0.999325064491958
+      }
+    }
+  },
+  "heterogeneous_reliability": {
+    "q": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01
+    ],
+    "theory_diag": 0.5049999999999999,
+    "theory_off": 0.284090909090909,
+    "theory_raw_EV": 0.715909090909091,
+    "theory_normalized_EV": 0.43744374437443745,
+    "empirical_diag": 0.503212379662492,
+    "empirical_off": 0.28342748717314525,
+    "empirical_normalized_EV": 0.43676368343075733
+  },
+  "get_splits": {
+    "input_mutated": true,
+    "five_visits_reported_fold_occupancies": [
+      2,
+      2
+    ],
+    "actual_fold_counts": [
+      2,
+      3
+    ],
+    "internal_nan_reported_total_mean": 2.0,
+    "internal_nan_correct_total_mean": 2.6666666666666665
+  },
+  "glm_true_marginal_theta45": {
+    "x": [
+      0.0,
+      2.0
+    ],
+    "marginal": [
+      4.307748951706429,
+      2.572688767813758
+    ]
+  },
+  "cached_summaries": [
+    {
+      "path": "results/ann/predictive_coder_conv1/ev_all_units_pitch_corr.npz",
+      "keys": [
+        "ev_v1",
+        "ev_v2",
+        "is_place"
+      ],
+      "n_total": 7630,
+      "n_finite_pairs": 7630,
+      "median_v1": 0.9311485834916381,
+      "median_v2": 0.8614121191529851,
+      "fraction_v1_gt_v2": 0.6315858453473132,
+      "n_place": 0,
+      "place_median_v1": null,
+      "place_median_v2": null
+    },
+    {
+      "path": "results/ann/predictive_coder_pre_pred/ev_all_units_pitch_corr.npz",
+      "keys": [
+        "ev_v1",
+        "ev_v2",
+        "is_place"
+      ],
+      "n_total": 8000,
+      "n_finite_pairs": 8000,
+      "median_v1": 0.9161795629145584,
+      "median_v2": 0.9189487342307611,
+      "fraction_v1_gt_v2": 0.471375,
+      "n_place": 0,
+      "place_median_v1": null,
+      "place_median_v2": null
+    },
+    {
+      "path": "results/ann/resnet50_layer1/ev_all_units_pitch.npz",
+      "keys": [
+        "ev_v1",
+        "ev_v2",
+        "is_place",
+        "n_units"
+      ],
+      "n_total": 8000,
+      "n_finite_pairs": 7964,
+      "median_v1": 0.0424243890968684,
+      "median_v2": 0.03554388731788302,
+      "fraction_v1_gt_v2": 0.5274987443495731,
+      "n_place": 291,
+      "place_median_v1": 0.05658211313670476,
+      "place_median_v2": 0.019057527084279685
+    },
+    {
+      "path": "results/ann/resnet50_layer1/ev_all_units_pitch_corr.npz",
+      "keys": [
+        "ev_v1",
+        "ev_v2",
+        "is_place"
+      ],
+      "n_total": 7964,
+      "n_finite_pairs": 7964,
+      "median_v1": 0.964456112682117,
+      "median_v2": 0.9575756109031316,
+      "fraction_v1_gt_v2": 0.5274987443495731,
+      "n_place": 291,
+      "place_median_v1": 0.9809424729157203,
+      "place_median_v2": 0.9434178868632952,
+      "comparison_note": "Aligned original arrays by finite-pair mask; no unit IDs stored.",
+      "comparison_to_pitch_cache_max_abs_diff": {
+        "same": 1.3990794775207744,
+        "complement": 0.47747027748510684,
+        "complement_swapped": 0.0,
+        "second_axis_complement_swapped": 0.0
+      }
+    },
+    {
+      "path": "results/ann/resnet50_layer3/ev_all_units_pitch.npz",
+      "keys": [
+        "ev_v1",
+        "ev_v2",
+        "is_place",
+        "n_units"
+      ],
+      "n_total": 8000,
+      "n_finite_pairs": 7987,
+      "median_v1": 0.0859574551326972,
+      "median_v2": 0.06331245919746464,
+      "fraction_v1_gt_v2": 0.5870790033804933,
+      "n_place": 238,
+      "place_median_v1": 0.08569595005977593,
+      "place_median_v2": 0.05815871113565378
+    },
+    {
+      "path": "results/ann/resnet50_layer3/ev_all_units_pitch_corr.npz",
+      "keys": [
+        "ev_v1",
+        "ev_v2",
+        "is_place"
+      ],
+      "n_total": 7987,
+      "n_finite_pairs": 7987,
+      "median_v1": 0.9189765837189383,
+      "median_v2": 0.9086035812172102,
+      "fraction_v1_gt_v2": 0.5187179166144985,
+      "n_place": 238,
+      "place_median_v1": 0.9250008594837007,
+      "place_median_v2": 0.9120262645311104,
+      "comparison_note": "Aligned original arrays by finite-pair mask; no unit IDs stored.",
+      "comparison_to_pitch_cache_max_abs_diff": {
+        "same": 1.0749228718525674,
+        "complement": 0.6571836637510076,
+        "complement_swapped": 0.26798096225182133,
+        "second_axis_complement_swapped": 0.16880990610981184
+      }
+    }
+  ]
+}

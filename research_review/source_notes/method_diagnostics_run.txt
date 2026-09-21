@@ -1,0 +1,123 @@
+{
+  "exact_counterexamples": {
+    "additive": {
+      "0": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      },
+      "1": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      }
+    },
+    "multiplicative": {
+      "0": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      },
+      "1": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      }
+    },
+    "pure_x": {
+      "0": {
+        "raw_EV": null,
+        "reliability": null
+      },
+      "1": {
+        "raw_EV": 0.0,
+        "reliability": 1.0
+      }
+    },
+    "pure_noise": {
+      "0": {
+        "raw_EV": 0.9768195901809097,
+        "reliability": 0.021283243751847158
+      },
+      "1": {
+        "raw_EV": 1.0044659220409586,
+        "reliability": -0.0005346752589526563
+      }
+    },
+    "crossover_interaction": {
+      "0": {
+        "raw_EV": 1.0909090909090908,
+        "reliability": 1.0
+      },
+      "1": {
+        "raw_EV": 1.032258064516129,
+        "reliability": 1.0
+      }
+    }
+  },
+  "pure_x_perturbation": {
+    "0.0001": {
+      "0": {
+        "raw_EV": 1.0067881818874795,
+        "reliability": -0.0201316166646148
+      },
+      "1": {
+        "raw_EV": 6.839651067735986e-10,
+        "reliability": 0.999999999294209
+      }
+    },
+    "0.1": {
+      "0": {
+        "raw_EV": 1.0025638596420023,
+        "reliability": -0.03979963903691353
+      },
+      "1": {
+        "raw_EV": 0.0006843009721223536,
+        "reliability": 0.999325064491958
+      }
+    }
+  },
+  "heterogeneous_reliability": {
+    "q": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01
+    ],
+    "theory_diag": 0.5049999999999999,
+    "theory_off": 0.284090909090909,
+    "theory_raw_EV": 0.715909090909091,
+    "theory_normalized_EV": 0.43744374437443745,
+    "empirical_diag": 0.503212379662492,
+    "empirical_off": 0.28342748717314525,
+    "empirical_normalized_EV": 0.43676368343075733
+  },
+  "get_splits": {
+    "input_mutated": true,
+    "five_visits_reported_fold_occupancies": [
+      2,
+      2
+    ],
+    "actual_fold_counts": [
+      2,
+      3
+    ],
+    "internal_nan_reported_total_mean": 2.0,
+    "internal_nan_correct_total_mean": 2.6666666666666665
+  },
+  "glm_true_marginal_theta45": {
+    "x": [
+      0.0,
+      2.0
+    ],
+    "marginal": [
+      4.307748951706429,
+      2.572688767813758
+    ]
+  }
+}
+Wrote /Users/moo/variance_analysis/research_review/source_notes/method_diagnostics.json; inspected 6 result archives
