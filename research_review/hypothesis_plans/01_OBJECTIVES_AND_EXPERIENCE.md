@@ -1,167 +1,427 @@
-# How do objectives and experience select spatial computations in transformers?
+# 01 — Objectives and experience: claim tree
 
-**Status: falsifiable research proposal, 14 September 2026. No proposed training or intervention has been run.** The existing project provides motivating observations, models, rendered observations, and analysis scaffolding. It does **not** currently establish an objective effect. Read this document with the [shared project handoff](/Users/moo/variance_analysis/research_review/hypothesis_plans/PROJECT_HANDOFF.md) and the original [manuscript](/Users/moo/variance_analysis/Spatial_maps_in_CNNs/manuscript.tex).
+## Rules
 
-## Narrative and scope
+- A claim holds if and only if every one of its children holds.
+- Numbered top-level claims are independent unless one lists another as a child. A child written "= Claim X" means the whole of Claim X.
+- Leaf kinds:
+  - **DEF** — a definition.
+  - **MATH** — follows from the definitions; the derivation is given.
+  - **CITE** — one or more sentences copied from the cited paper. Inline math is retyped in plain text; nothing else is changed.
+  - **EXP** — an experiment. The leaf says that the strongest attack on its parent does not produce the refuting result.
+  - **AXIOM** — assumed and not tested. All axioms are listed again in the last section.
+- An EXP leaf holds if and only if (a) the attack was run and did not produce the "Refuted if" result, and (b) the same attack produces that result when the effect is planted ("Sensitive if"). A leaf that fails (b) is untested, not survived.
+- Status values: `untested`, `survived`, `refuted`, `observed, no margin set`.
+- Every δ, ε and N is a free parameter. Each is fixed before the confirmatory run and recorded in the Parameters section. No parameter has been fixed yet.
+- No experiment in this document has been run unless its status says otherwise.
 
-**Method-centered revision:** the correlation assay is the proposed principal measurement of conditional tuning-shape stability. The paper asks whether it reveals an objective-dependent distinction that conventional summaries miss and that independent tests can validate. Its role must be earned through [M1–M4](METHOD_CENTRAL_CLAIMS.md): a defined target, adequate estimation, comparative value and a scientifically informative application. Stable shape deliberately permits gain/baseline modulation; it is not explained variance or guaranteed functional invariance. O0 is now the core assay claim; O1 tests a separate functional implication.
+## Definitions
 
-The proposed paper asks **which spatial computation a learning objective encourages, and whether that computation makes location accessible across headings and histories**. The initial contrast is ordinary visual prediction versus the same prediction task with additional latent-transition pressure. Experience is a second, staged intervention. Location invariance, heading retention, compact state, and computational usefulness are distinct outcomes; none follows automatically from another.
+- **DEF model.** `PredictiveCoder` in `src/ann/predictive_coder.py`: convolutional encoder, attention block 1, feed-forward block 1, attention block 2, feed-forward block 2, image decoder. Input is a sequence of frames. Output is a predicted next frame for each input frame.
+- **DEF p, h, H.** p is position (x, y). h is heading. H is the sequence of frames before the current frame.
+- **DEF z.** z_t is the activation of the last input token at one fixed layer. The layer is fixed before the confirmatory run.
+- **DEF field.** f_h(p) is a unit's mean response at position p and heading h, averaged over histories that end at (p, h).
+- **DEF S, D.** S is the mean, over all pairs of different headings h ≠ h′, of the Pearson correlation over p between f_h and f_h′. D = 1 − S.
+- **DEF D̂.** D̂ is an estimate of D from data. Each pair correlation is computed between f_h from one half of the histories and f_h′ from the other, disjoint half. D̂_v0 is the current code: `1 - quantify_variance_corr(fold0, fold1, occ, axis=1)[0]`.
+- **DEF model-level D̂.** The median of D̂ over all units of the fixed layer.
+- **DEF objective A.** L_pred: mean squared error between predicted and actual next frame.
+- **DEF objective B.** L_pred + λ·L_lat. L_lat = SmoothL1( q(z_t, sg(e_{t+1})), sg(z_{t+1}) ). e_{t+1} is the encoder output for the next frame. q is a two-layer MLP. sg is stop-gradient.
+- **DEF seed pair.** One A model and one B model with identical initial weights, identical training episodes and identical batch order.
+- **DEF G.** Fit a ridge linear decoder from z to p on one heading sector. G = (mean position error on other headings) − (mean position error on held-out episodes in the training sector), at matched positions.
+- **DEF native error.** Mean squared error of the model's own decoder output against the true next frame. No probe is involved.
+- **DEF memory test set.** Episodes in which the current frame is the same for two histories and the true next frame differs.
 
-One possible result is that an objective encourages reusable spatial state, while another repeatedly retrieves relevant views. Another is that both implement the same solution, with differences confined to learning speed. A third is that an objective improves spatial transfer through a different coordinate system without producing more invariant individual units. These possibilities make the experiment useful, but they support different papers. The intended headline must survive an attack on its specific causal chain:
+## Claim 0 — The latent-transition loss changes the spatial computation of the transformer
 
-**objective → spatial organization → an identifiable native computation → specified generalization.**
+- 0.1 = Claim 1
+- 0.2 = Claim 2
+- 0.3 = Claim 4
+- 0.4 = Claim 5
+- 0.5 = Claim 6
 
-The broad statement “learning objectives determine spatial representations” is established background, not adequate novelty. Navigation tasks and action spaces already produce differing reference frames [S1]. A recent transformer spatial-planning preprint compares training regimes and performs causal analyses [S2]. NextLat already proposes latent prediction and reports world-model benefits [S3]. Ordinary next-token training can also produce belief-state geometry [S4]. Our opportunity is a controlled, mechanistically explained effect in a visual spatial setting, with explicit conditions under which it disappears.
+## Claim S — A and B differ only in whether L_lat sends gradient into the backbone
 
-This fits Wei's work on optimized navigation circuits and experience-dependent conjunctive tuning [S5], while allowing transformer mechanisms to be the central contribution. His recent LLM work also distinguishes representational organization from the algorithm used during in-context learning [S6]. These are connections to published questions, not predictions of his personal preferences. The original project's biological comparison supplies a motivation for stable access, not a requirement that successful models eliminate heading or reproduce every biological response property.
+- **S.1 EXP** A and B in each seed pair start from the same weights and see the same batches.
+  - Attack: hash initial weights and the batch index sequence of both runs.
+  - Refuted if: any hash differs.
+  - Sensitive if: a run with a changed seed gives a different hash.
+  - Status: untested. No two-objective trainer exists in the repository.
+- **S.2 EXP** In A, L_lat sends no gradient into the backbone.
+  - Attack: backpropagate L_lat alone in A; read the gradient norm on every backbone parameter.
+  - Refuted if: any norm is nonzero.
+  - Sensitive if: the same read in B gives a nonzero norm (S.3).
+  - Status: untested.
+- **S.3 EXP** In B, L_lat sends gradient into the backbone.
+  - Attack: same as S.2, in B.
+  - Refuted if: all norms are zero.
+  - Sensitive if: S.2 reads zero with the same code.
+  - Status: untested.
+- **S.4 EXP** A and B have the same architecture and the same auxiliary head q.
+  - Attack: diff the two configurations and parameter counts.
+  - Refuted if: anything differs other than the stop-gradient on q's inputs.
+  - Sensitive if: a deliberately altered configuration is flagged.
+  - Status: untested.
+- **S.5 EXP** The prediction at step t does not depend on frames after t.
+  - Attack: hold frames 1…t fixed, replace frames t+1…L, compare the output at t. Run in train mode and eval mode.
+  - Refuted if: the output at t changes.
+  - Sensitive if: removing the attention mask makes the output at t change.
+  - Status: untested. Reading the code predicts refutation for the unmodified architecture: `F.layer_norm(f, f.shape[1:])` is applied to a tensor of shape [B, L, C, H, W] (`predictive_coder.py:480–493`), so the normalization statistics include all L frames. The encoder's BatchNorm also pools batch × time in train mode.
+- **S.6 EXP** Both models predict the next frame better than copying the current frame.
+  - Attack: compare native error with the error of the copy-current-frame predictor on held-out episodes.
+  - Refuted if: either model's error is not lower by δ_comp.
+  - Sensitive if: an untrained model fails this test.
+  - Status: untested.
+- **S.7 EXP** Neither model's z has collapsed.
+  - Attack: compute the variance and effective rank of z over held-out episodes.
+  - Refuted if: variance or rank in either model is below ε_rank.
+  - Sensitive if: a model trained without stop-gradient on the target collapses and is flagged.
+  - Status: untested.
+- **S.8 EXP** In B, the head q uses z_t.
+  - Attack: on the frozen B backbone, fit a head of the same size that receives only e_{t+1} (z_t set to zero).
+  - Refuted if: its L_lat is within δ_head of the full head's L_lat.
+  - Sensitive if: on the memory test set, where the same e_{t+1} has different target z_{t+1}, a head without z_t cannot reach the full head's loss.
+  - Status: untested.
+- **S.9 EXP** No training trajectory appears in the test set.
+  - Attack: compare episode identifiers and pose sequences between splits.
+  - Refuted if: any overlap.
+  - Sensitive if: a planted duplicate is found.
+  - Status: untested.
+- **S.10 EXP** λ, the stopping rule and the optimizer settings were chosen using validation L_pred only.
+  - Attack: read the selection log.
+  - Refuted if: any selection step reads D̂, G, or any outcome in Claims 1–7.
+  - Sensitive if: the log records every metric read during selection.
+  - Status: untested.
+- **S.11 EXP** Every training transition is a legal move.
+  - Attack: check each consecutive pose pair against the declared pose graph (adjacent position or adjacent heading).
+  - Refuted if: any transition is not an edge.
+  - Sensitive if: a planted illegal transition is found.
+  - Status: untested. No trajectory generator exists in the repository. `data/minecraft/panorama-90yaw/` holds 289 positions × 90 headings of single frames.
 
-## What the existing project contributes
+## Claim M — D̂ measures change of spatial field shape across heading in this data
 
-All paths in this section are in the **original** repository `/Users/moo/variance_analysis`; the working review lives in `/Users/moo/explained_variance`. Relative names below resolve against the original root.
+- **M.1 MATH** If f_h(p) = a_h·g(p) + b_h with a_h > 0 and g not constant, then D = 0.
+  - Derivation: Pearson correlation is unchanged by positive scaling and by adding a constant, so every pair correlation is 1.
+- **M.2 EXP** The code returns D̂ = 0 for noiseless gain-only and offset-only changes.
+  - Attack: score h(x,y) = x + y and h(x,y) = x·y with the repository functions.
+  - Refuted if: D̂ ≠ 0 on either axis.
+  - Sensitive if: a crossover interaction gives D̂ > 0.
+  - Status: survived. Both cases return 0.0 on both axes; 20 + (x − 6.5)·sin(y) returns 1.09 and 1.03 (`source_notes/method_diagnostics.json`).
+- **M.3 EXP** The pipeline call compares spatial profiles across headings.
+  - Attack: read `quantify_variance_corr` and its call site; score a synthetic unit with a fixed place field and a synthetic unit with a fixed heading curve.
+  - Refuted if: the fixed-place-field unit gets high D̂ from the `axis=1` call.
+  - Sensitive if: the two synthetic units get opposite scores.
+  - Status: survived by code reading only. `axis` is moved to the slice dimension and the rest is flattened into the profile (`explained_variance.py:123–124`); the pipeline calls `axis=1` on (position, heading) maps (`run_model_layers.py:82`). The synthetic check has not been run.
+- **M.4 EXP** A unit whose spatial profile is constant is reported as not estimable.
+  - Attack: score h(x,y) = x with and without small independent noise.
+  - Refuted if: the code returns a finite D̂ for the constant-profile axis.
+  - Sensitive if: not applicable; the refuting result is directly observable.
+  - Status: refuted for v0. Without noise the code returns NaN. With noise of amplitude 10⁻⁴ it returns D̂ = 1.007 with repeat correlation −0.02 (`method_diagnostics.json`).
+- **M.5 EXP** A field shift of δ_shift bins raises D by at least δ_D.
+  - Attack: compute noiseless D for synthetic fields shifted by δ_shift across headings, on the real position grid. Repeat for a width change and for an added second field.
+  - Refuted if: D < δ_D for any of the three.
+  - Sensitive if: not applicable; noiseless computation.
+  - Status: untested.
+- **M.6 EXP** Identical field shape in every heading does not give D̂ above δ_D when headings differ in reliability.
+  - Attack: simulate one shape in all headings with per-heading noise levels taken from the data; score it.
+  - Refuted if: D̂ > δ_D.
+  - Sensitive if: a planted shift of δ_shift under the same noise gives D̂ larger by δ_D.
+  - Status: refuted for v0. Twelve identical slices, six with reliability 1 and six with reliability 0.01, give D̂ = 0.716. The ratio correction 1 − off/diag gives 0.437 (`method_diagnostics.json`, 4,000-bin simulation with the repository scorer). Untested for any other estimator version.
+- **M.7 MATH** For identical shape in every heading and equal reliability q in every heading, E[D̂_v0] ≈ 1 − q.
+  - Derivation: with signal plus independent noise, the cross-half correlation of slices i and j is ρ_ij·√(q_i·q_j). With ρ_ij = 1 and q_i = q this is q. (`source_notes/method_audit.md` §2.)
+  - Consequence: D̂_v0 fails M.6 whenever q < 1 − δ_D.
+  - **M.7.1 CITE** Splitting trials leaves a bias toward zero in the correlation of noisy tuning curves. Pospisil & Bair (2021), *J Neurosci* 41(26):5638–5651, Results, "Corrected estimator of signal correlation": "The above strategy means that rn is now zero, thus leaving r^s (or r^split) with a bias toward zero that increases with noise as follows:" (r^s is r-hat-sub-s in the source.)
+  - **M.7.2 CITE** The bias affects studies of tuning invariance across conditions. Pospisil & Bair (2021), "The unbiased estimation of r2 between two sets of noisy neural responses", bioRxiv 2021.03.29.437413, Abstract: "Yet this metric is biased by trial-to-trial variability: as trial-to-trial variability increases, measured correlation decreases. Major lines of research are confounded by this bias, including the study of invariance of neural tuning across conditions and the similarity of tuning across neurons."
+- **M.8 EXP** Nominal 95% intervals for D̂ contain the true D in at least 90% of simulations.
+  - Attack: simulate known fields on the real (p, h) support at observed noise levels; compute the interval with the frozen procedure.
+  - Refuted if: coverage < 90%.
+  - Sensitive if: an interval procedure known to be too narrow is flagged.
+  - Status: untested. No interval procedure is implemented.
+- **M.9 EXP** Smoothing is applied on the two-dimensional position grid.
+  - Attack: read the scoring path.
+  - Refuted if: smoothing runs along a flattened position index.
+  - Sensitive if: not applicable.
+  - Status: refuted for the v0 model pipeline. `process_neuron_loop` smooths a (289, 90) map with sigma = (1, 1); the 17 × 17 grid is one axis of length 289 (`run_model_layers.py:76–80, 158`).
+- **M.10 EXP** D̂ is computed on the original bins of signed activations.
+  - Attack: read the scoring path.
+  - Refuted if: the map is interpolated or clipped at zero before scoring.
+  - Sensitive if: not applicable.
+  - Status: refuted for the v0 model pipeline. `masked_zoom` upsamples heading 5× and clips at zero (`explained_variance.py:25–31`; `run_model_layers.py:79, 158`).
+- **M.11 EXP** The two halves are independent repeats of the same condition.
+  - Attack: list what differs between the halves.
+  - Refuted if: the halves differ in a controlled stimulus variable.
+  - Sensitive if: not applicable.
+  - Status: refuted for the v0 model pipeline: the halves are pitch groups [−3°, +1°] and [−1°, +3°]. Untested for the new experiments, where the halves are disjoint sets of histories ending at the same (p, h).
+- **M.12 EXP** Every heading pair is scored on the same set of positions.
+  - Attack: compare the valid-bin mask across heading pairs.
+  - Refuted if: masks differ between pairs.
+  - Sensitive if: a planted missing bin is detected.
+  - Status: untested. v0 uses a pair-specific mask inside `_corr_matrix`.
+- **M.13 EXP** Responses come from histories drawn from the training distribution.
+  - Attack: read the extraction code.
+  - Refuted if: histories are not samples of the training distribution.
+  - Sensitive if: not applicable.
+  - Status: refuted for the v0 model pipeline: each frame is repeated ten times and the last token is read (`run_model_layers.py:50–58`). Untested for the new experiments.
 
-| Existing asset | Concrete reuse | Evidence limit / repair before use |
-|---|---|---|
-| [manuscript.tex](/Users/moo/variance_analysis/Spatial_maps_in_CNNs/manuscript.tex), [map.bib](/Users/moo/variance_analysis/Spatial_maps_in_CNNs/map.bib) | Joint position–heading question, conditional fields, biological comparison, citations in context | Existing model comparisons confound architecture, objective, training data, and evaluation. They cannot estimate an objective-only effect. |
-| [predictive_coder.py](/Users/moo/variance_analysis/src/ann/predictive_coder.py) | `PredictiveCoder`, convolutional encoder, `attention_1`, `ffn_1`, `attention_2`, `ffn_2`, image decoder; intervention entry points | Condensed implementation, not a complete training package. Local attention returns `attn=None`; attention matrices/head interventions require instrumentation. |
-| [get_activations.py](/Users/moo/variance_analysis/src/ann/get_activations.py) and `data/weights/predictive_coder.ckpt` | Model construction, image normalization, existing checkpoint, encoder/pre-/post-prediction comparison | Checkpoint file exists; loading and faithful training-protocol recovery are separate gates. Loader silently leaves random weights if the file is absent: new code must fail loudly. `get_latents` disables gradients; use a differentiable forward for training. |
-| [model_neurons.ipynb](/Users/moo/variance_analysis/notebooks/model_neurons.ipynb); `data/minecraft/panorama-90yaw/loc_*.npz` | Loader uses `rgb`; location comes from filename; nominal 90 views/location. Can create a documented discrete pose-graph observation environment | Existing evaluation repeats each image ten times and reads the last timestep. This is a static-history assay, not natural-history evidence. Audit heading order, scene axes, and traversable edges before constructing new trajectories. |
-| `data/minecraft/panorama-90yaw-pitch/`; `data/ann_activations/predictive_coder_{pre_pred,post_pred}_panorama_{clean,pitch}/acts.npz` | Initial field visualizations, nuisance sensitivity, pipeline smoke tests | Pitch folds `[-3,+1]` versus `[-1,+3]` are different nuisance distributions, not IID repeated noise. Cached activations do not support new-objective or natural-history claims. |
-| [explained_variance.py](/Users/moo/variance_analysis/src/explained_variance.py) and [method diagnostics](/Users/moo/variance_analysis/research_review/method_diagnostics.py) | Principal candidate assay and synthetic cases for M1/M2 | The function returns mean correlation; downstream `1−r` is shape dispersion. Gain/offset invariance is deliberate, while constant profiles and noise attenuation need explicit handling. Calibrate and compare it before central empirical use. Smooth physical x/y axes, not flattened location indices. |
-| [bio_neurons.ipynb](/Users/moo/variance_analysis/notebooks/bio_neurons.ipynb), biological ratemap/decoder modules, `data/rodents/` | Optional biological anchor for a narrowly defined field or transfer property | Original biological pipeline has not been fully audited. No matched model–brain visual stimuli or causal biological intervention is established. This analysis is optional for the objective paper. |
+## Claim 1 — Objective B lowers D relative to objective A
 
-The unused `binning_bias_fig.ipynb` is **not** part of the intended final-paper evidence. Do not make its defects a prerequisite repair for this proposal. Calibration of any estimator actually used remains necessary.
+- 1.1 = Claim S
+- 1.2 = Claim M
+- **1.3 EXP** Across seed pairs, model-level D̂ is lower in B than in A by at least δ_D.
+  - Attack: train N_seed seed pairs to the frozen stopping rule. Compute model-level D̂ on the common test episodes.
+  - Refuted if: the upper bound of the 95% interval of the paired difference D̂_B − D̂_A is above −δ_D.
+  - Sensitive if: a positive-control model trained with an explicit heading-invariance loss shows a difference below −δ_D with N_seed pairs.
+  - Status: untested.
+- **1.4 EXP** The difference in 1.3 is not a difference in reliability.
+  - Attack: match A and B units on repeat correlation (the diagonal of the correlation matrix); recompute 1.3 on the matched units.
+  - Refuted if: the matched difference is above −δ_D.
+  - Sensitive if: in simulation, a planted reliability-only difference disappears under the same matching.
+  - Status: untested.
+- **1.5 EXP** The difference in 1.3 does not depend on which units are scored.
+  - Attack: recompute 1.3 on all units, and on units selected as place-like from training-split data only.
+  - Refuted if: the difference is above −δ_D in either set.
+  - Sensitive if: same as 1.3.
+  - Status: untested.
+- **1.6 EXP** An independent field model shows the same difference.
+  - Attack: for each unit fit (i) one spatial shape with a gain and offset per heading and (ii) a separate spatial shape per heading. Compare held-out squared error. Take the model-level median of error(i) − error(ii).
+  - Refuted if: that median is not smaller in B than in A by δ_fit.
+  - Sensitive if: planted shifted fields make error(i) − error(ii) rise.
+  - Status: untested.
+- **1.7 EXP** Marginal place-cell measures do not show the difference.
+  - Attack: compute the fraction of place-like units and the mean spatial information per unit, from heading-averaged maps, for A and B.
+  - Refuted if: either measure differs between A and B by at least its margin δ_marg.
+  - Sensitive if: an untrained model differs from a trained model on these measures.
+  - Status: untested.
 
-The supplied repository does not establish a reproducible two-objective trainer, matched trajectory splits, simulator interventions, or activation-patching suite. Upstream [predictive-coding code](https://github.com/jgornet/predictive-coding-recovers-maps) lists environment and training notebooks; availability is verified, successful recovery is not. A panorama pose-graph pilot creates **new synthetic experience** from recorded views. It must not be described as recovering the historical navigation distribution.
+## Claim 2 — Objective B makes position readable across headings
 
-## Operational definitions and inferential contract
+- 2.1 = Claim S
+- **2.2 EXP** Position can be decoded within a heading sector in both models.
+  - Attack: within-sector error on held-out episodes.
+  - Refuted if: either model's error is above ε_within (in arena units).
+  - Sensitive if: a decoder on shuffled position labels is above ε_within.
+  - Status: untested.
+- **2.3 EXP** G is lower in B than in A by at least δ_G.
+  - Attack: N_seed seed pairs; same decoder family, regularization chosen on training-sector validation data; equal training-set sizes; matched test positions.
+  - Refuted if: the upper bound of the 95% interval of G_B − G_A is above −δ_G.
+  - Sensitive if: the positive-control model of 1.3 shows a difference below −δ_G.
+  - Status: untested.
+- **2.4 EXP** Within-sector error in B is not higher than in A by more than δ_within.
+  - Attack: same runs as 2.3.
+  - Refuted if: the lower bound of the interval of the within-sector error difference is above δ_within.
+  - Sensitive if: same as 2.2.
+  - Status: untested.
+- **2.5 EXP** 2.3 holds for every choice of training sector.
+  - Attack: repeat 2.3 with each of the N_sector sectors as the training sector.
+  - Refuted if: 2.3 is refuted for any sector.
+  - Sensitive if: same as 2.3.
+  - Status: untested.
+- **2.6 EXP** 2.3 holds at convergence and at matched validation L_pred.
+  - Attack: evaluate 2.3 at the frozen stopping point and at the pair of checkpoints with equal validation L_pred.
+  - Refuted if: 2.3 is refuted at either.
+  - Sensitive if: same as 2.3.
+  - Status: untested.
 
-Let `p_t=(x_t,y_t)`, `h_t` be circular heading, `H_t` the observation history, and `z_t` a specified layer's last-token representation. A representation can preserve heading while allowing a fixed location readout. Raw equality `z(p,h1)=z(p,h2)` is a stronger, usually unnecessary property.
+## Claim 3 — B keeps heading while making position readable across headings
 
-**Primary access outcome.** Fit a regularized linear position decoder using a prespecified heading sector and independent episodes; evaluate on held-out headings at matched positions. Report Euclidean error in arena units and a transfer penalty `G = error_cross-heading − error_within-heading`, with matched training-set sizes and test-position distributions. Report both errors: low `G` from uniformly poor decoding is failure. Use alternate source sectors as a declared robustness test. Hyperparameters and feature standardization are selected on training/validation data only. Heading is decoded separately through sine/cosine targets and circular error. A nonlinear probe is a secondary access test, not an excuse to relabel failed linear transfer.
+- 3.1 = Claim 2
+- **3.2 EXP** Heading can be decoded from z in B.
+  - Attack: ridge decoder of (sin h, cos h) from z, trained on some positions, tested on held-out positions.
+  - Refuted if: circular error is above ε_head.
+  - Sensitive if: the same decoder on input pixels is below ε_head, and on shuffled labels is above it.
+  - Status: untested.
+- **3.3 EXP** B's native error on turn steps is not higher than A's by more than δ_turn.
+  - Attack: native error on steps where only heading changes.
+  - Refuted if: the lower bound of the interval of error_B − error_A is above δ_turn.
+  - Sensitive if: a model with heading removed from z by projection fails this test.
+  - Status: untested.
 
-**Field outcome.** For repeated histories ending at each `(p,h)`, fit shared spatial shape plus heading-specific gain/offset and compare held-out prediction with heading-specific spatial shapes. Report reliability, modulation amplitude, and residual shape change separately. Native channel units and discovered features are different analysis bases; do not choose whichever yields the most place-like cells after seeing the result.
+## Claim 4 — B moves history into the current token by the end of block 1; A reads it from past tokens in block 2
 
-**Primary assay outcome.** Compute `S = mean cross-fold off-diagonal correlation` of spatial profiles across headings and `D = 1−S`, using a fixed common profile domain and declared pair aggregation. The selected context axis is heading, not position. Record the exact estimator version, invalid/constant profiles, reliability and gain. Use the independent field fits above to check what a score difference reflects. Preselect the population summary and practical `D` difference through calibration on meaningful field changes; unit counts do not replace model replication.
+- 4.1 = Claim S
+- **4.2 EXP** On the memory test set, the next frame cannot be predicted from the current frame alone.
+  - Attack: train a current-frame-only predictor and a full-history predictor of equal size on the same episodes.
+  - Refuted if: the current-frame-only error is within δ_mem of the full-history error.
+  - Sensitive if: on a test set without aliasing the two errors are within δ_mem.
+  - Status: untested. No memory test set exists.
+- **4.3 EXP** Blocking the current token's attention to past tokens in block 2 raises native error less in B than in A, by at least δ_mask.
+  - Attack: mask those attention entries at inference on the memory test set; N_seed seed pairs.
+  - Refuted if: the upper bound of the interval of (rise in B) − (rise in A) is above −δ_mask.
+  - Sensitive if: the rise in A is above δ_mask.
+  - Status: untested.
+- **4.4 EXP** A mask of the same size on tokens that carry no disambiguating cue does not produce the 4.3 difference.
+  - Attack: mask an equal number of block-2 attention entries to tokens before the cue.
+  - Refuted if: the difference (rise in B) − (rise in A) is below −δ_mask.
+  - Sensitive if: same as 4.3.
+  - Status: untested.
+- **4.5 EXP** Swapping the post-block-1 current-token state between two histories with the same current frame and different cues moves B's prediction to the donor's next frame.
+  - Attack: interchange that state, with block-2 past-token attention masked; measure native error against the donor's and the recipient's true next frame.
+  - Refuted if: error against the donor's frame does not fall by at least δ_swap of the clean gap.
+  - Sensitive if: swapping the full set of token states produces the donor's frame.
+  - Status: untested.
+- **4.6 EXP** Swapping that state between two different histories that imply the same next frame leaves B's prediction unchanged.
+  - Attack: same interchange, on history pairs with the same true next frame.
+  - Refuted if: native error rises by more than δ_equiv.
+  - Sensitive if: 4.5 shows the interchange can change the output.
+  - Status: untested.
+- **4.7 EXP** No route other than attention carries information between tokens.
+  - Attack: = S.5, plus: with all cross-token attention masked, perturb past frames and read the current token.
+  - Refuted if: the current token changes.
+  - Sensitive if: with attention unmasked the current token changes.
+  - Status: untested. Code reading predicts refutation for the unmodified architecture (see S.5). A model with per-token normalization is a different model and is named as such.
 
-**Native computation outcome.** Measure the transformer's own next-observation error on memory-diagnostic examples and counterfactual outputs after internal intervention. A newly trained location decoder or the auxiliary latent head does not establish what the original image-prediction path uses.
+## Claim 5 — A fixed set of components C in B performs the history integration of Claim 4
 
-**Inference.** Random seed/model instance is the replication unit for training effects; units, frames, and checkpoints are nested observations. Use paired initialization and data order where possible. A pilot estimates variability; choose confirmatory replication from the precision needed to distinguish scientifically meaningful effects. Before confirmation, freeze practical-equivalence margins in physical/task units, justified by spatial sampling and the smallest useful improvement. Report confidence intervals against those margins. A nonsignificant difference with a wide interval is inconclusive. An effect in the wrong direction or a precise equivalence result can kill the specified claim. Freeze layer, decoder family, objective strength, and primary split after discovery; retain exploratory alternatives under that label.
+- 5.1 = Claim 4
+- **5.2 EXP** C is chosen on discovery episodes only.
+  - Attack: read the patching registry.
+  - Refuted if: any confirmation episode was used to choose C.
+  - Sensitive if: the registry records the episode set of every selection step.
+  - Status: untested.
+- **5.3 EXP** Patching C's output from a donor run into a recipient run moves the prediction toward the donor's next frame on held-out episodes.
+  - Attack: donor and recipient share the current frame and differ in the cue. Patch the full output of C from the natural donor run.
+  - Refuted if: the fall in error against the donor's frame is below δ_patch of the clean gap.
+  - Sensitive if: patching all components gives the donor's frame.
+  - Status: untested.
+- **5.4 EXP** Patching a random component set of the same size and activation norm does not.
+  - Attack: same as 5.3 with N_rand random sets.
+  - Refuted if: more than 5% of random sets reach δ_patch.
+  - Sensitive if: same as 5.3.
+  - Status: untested.
+- **5.5 EXP** Removing C raises native error on the memory test set, and putting C's clean output back removes the rise.
+  - Attack: replace C's output with its mean over episodes; then restore the clean output with everything else still corrupted upstream of C.
+  - Refuted if: the rise is below δ_abl, or restoration recovers less than δ_rest of it.
+  - Sensitive if: removing the whole of block 1 raises error.
+  - Status: untested.
+- **5.6 EXP** 5.3–5.5 hold under two corruption methods and two output metrics.
+  - Attack: repeat with (mean ablation, resample ablation) × (full-image error, error in the image region where donor and recipient frames differ).
+  - Refuted if: any of the four combinations refutes 5.3, 5.4 or 5.5.
+  - Sensitive if: same as 5.3.
+  - Status: untested.
+  - **5.6.1 CITE** Patching results depend on these choices. Zhang & Nanda (2024), ICLR, arXiv:2309.16042, Abstract: "In several settings of localization and circuit discovery in language models, we find that varying these hyperparameters could lead to disparate interpretability results." §1: "On corruption method, we show that GN and STR can lead to inconsistent localization and circuit discovery outcomes (subsection 3.1)."
+- **5.7 EXP** Attention weights are not used as evidence for C.
+  - Attack: read the evidence listed for C.
+  - Refuted if: any listed evidence is an attention map without an intervention.
+  - Sensitive if: not applicable.
+  - Status: untested.
 
-## Claim tree: hypotheses to attack
+## Claim 6 — C is why B predicts better on new trajectories
 
-Every claim below is **proposed**, not a result. The method-centered objective narrative requires M1/M2, O0 and demonstrated M3/M4 value. O1 tests whether the measured distinction is associated with better access. O2/O2a supply a possible mechanism; O3 tests native usefulness. O1a and O4 are separable extensions. Passing a decoder claim without O0 does not validate the central assay story.
+- 6.1 = Claim 5
+- **6.2 EXP** No held-out trajectory composition or cue-gap length appears in training.
+  - Attack: enumerate compositions and gap lengths in both splits.
+  - Refuted if: any overlap.
+  - Sensitive if: a planted overlap is found.
+  - Status: untested.
+- **6.3 EXP** B has lower native error than A on the held-out compositions, by at least δ_gen.
+  - Attack: N_seed seed pairs; also compare with a current-frame-only predictor and a short-history predictor.
+  - Refuted if: the upper bound of the interval of error_B − error_A is above −δ_gen.
+  - Sensitive if: the full-history predictors beat the current-frame-only predictor on this set.
+  - Status: untested.
+- **6.4 EXP** 6.3 holds for error in the image region that differs between alternative futures.
+  - Attack: repeat 6.3 with the region metric.
+  - Refuted if: 6.3 is refuted under the region metric.
+  - Sensitive if: same as 6.3.
+  - Status: untested.
+- **6.5 EXP** Removing C from B removes at least δ_med of B's advantage on held-out compositions, and less than that on familiar compositions.
+  - Attack: ablate C as in 5.5; recompute 6.3 on both sets.
+  - Refuted if: the advantage on held-out compositions falls by less than δ_med, or falls equally on familiar compositions.
+  - Sensitive if: ablating all of block 1 removes the advantage.
+  - Status: untested.
+- **6.6 EXP** Removing a random component set of the same size does not.
+  - Attack: N_rand random sets.
+  - Refuted if: more than 5% of random sets remove δ_med of the advantage.
+  - Sensitive if: same as 6.5.
+  - Status: untested.
+- **6.7 EXP** Restoring C's clean output restores the advantage.
+  - Attack: as 5.5.
+  - Refuted if: less than δ_rest of the lost advantage returns.
+  - Sensitive if: same as 6.5.
+  - Status: untested.
 
-### O0 — The correlation assay reveals a reliable objective-dependent change in conditional field shape
+## Claim 7 — The effect of the objective on D depends on the ratio of rotation to translation in training
 
-**Claim:** the controlled A/B objective contrast produces a meaningful change in calibrated conditional shape dispersion, and that measurement exposes structure not established by conventional marginal spatial-cell summaries alone.
+- 7.1 = Claim 1
+- **7.2 DEF** Experience E1 and E2 are two training sets that differ in the fraction of steps that are rotations.
+- **7.3 EXP** E1 and E2 are equal in number of frames, position occupancy, heading coverage and sequence length.
+  - Attack: compute the four statistics for both sets.
+  - Refuted if: any differs by more than ε_exp.
+  - Sensitive if: a planted occupancy difference is flagged.
+  - Status: untested.
+- **7.4 EXP** The interaction (D̂_B − D̂_A under E2) − (D̂_B − D̂_A under E1) is not zero.
+  - Attack: 2 × 2 design, N_seed seed pairs per experience, one common test set.
+  - Refuted if: the 95% interval of the interaction lies inside ±δ_int.
+  - Sensitive if: a simulated interaction of size δ_int is detected with N_seed pairs.
+  - Status: untested.
+- **7.5 EXP** The field model of 1.6 shows the same interaction.
+  - Attack: compute the 1.6 quantity in the 2 × 2 design.
+  - Refuted if: its interaction interval lies inside ±δ_fit.
+  - Sensitive if: same as 1.6.
+  - Status: untested.
 
-- **Available evidence:** original field examples and scoring code motivate the assay; no controlled objective result exists. M1 defines the target; M2 adequacy remains to be established.
-- **Test:** freeze the score version, heading/profile axes, common support, population summary and a meaningful margin. Compare paired A/B seeds at matched exposure, with independent gain/offset and field-model analyses. Preregister a directional hypothesis only if justified before confirmation; otherwise use a declared two-sided contrast. Benchmark marginal cell criteria and close shape/separability measures under matched conditions.
-- **Best killing result:** adequately powered competent models show practical equivalence in calibrated shape dispersion; or an apparent difference follows reliability, gain-induced signal-to-noise changes, unit selection or support rather than true shape. A result fully explained by a conventional summary defeats the additional-information part. Equal success by a close shape comparator narrows methodological novelty under M3, even if the objective finding survives.
-- **Support criterion:** independent field analyses confirm a meaningful shape difference, the calibrated score identifies it on held-out runs, and the selected added-value claim survives fair comparison. A score difference alone is not sufficient.
-- **Confounds/branch:** an objective could improve O1 decoding without changing shape, or change shape without improving O1. Report those separately. If O0 fails, the objective-mechanism research may continue, but the correlation method has not earned the proposed central role in that result. If O0 survives while O1 fails, a substantive shape/access dissociation can support a narrower paper; positive functional utility is not established.
+## Claim 8 — D̂ separates A from B better than existing shape measures
 
-### O1 — Additional latent-transition pressure improves location access across heading
+- 8.1 = Claim 1
+- **8.2 CITE** A correlation index of the similarity of tuning-curve shape across conditions of other stimulus variables exists, in a Pearson form and a rank form. Nowak, Dobbins, Gawne, Grzywacz & Amthor (2011), *J Neurophysiol* 105(5):2083–2099, Methods, "Similarity Index".
+  - "Within each tuning category, the similarity of the shapes of those tuning curves was quantified off-line using a similarity index."
+  - "This index was similar to that introduced by Rapela et al. (2010) except for two differences: it was based on the median rather than the mean as the measure of central tendency and on the Kendall's tau rank correlation coefficient rather than the Pearson product-moment correlation coefficient as the measure of correlation."
+  - "The index was computed in three steps: first, the tuning curves were normalized with respect to their peaks, then the median normalized tuning curve for the cell was determined, and finally the Kendall's tau rank correlation coefficient between the data constituting that median curve and the data corresponding to all the normalized tuning curves was computed yielding the index value."
+- **8.3 CITE** A split-half separability index for tuning across a second variable exists. Rust & DiCarlo (2010), *J Neurosci* 30(39):12978–12995, Materials and Methods, "Single-neuron measurement of linear separability".
+  - "This metric measures how well the response of a neuron can be explained as resulting from independent tuning for object identity and the identity-preserving image transformation (e.g., retinal position, size)."
+  - "For these neurons, we computed the independent tuning prediction by computing the singular value decomposition of one matrix (M1 = USV′) and then used the first principal component to determine the expected response to each object across the six transformations (Mpred was the product of the first columns of U and V′). Finally, we computed the element-wise Pearson's correlation of Mpred and the separately measured M2."
+- **8.4 EXP** The similarity index of 8.2 does not separate A from B as well as D̂.
+  - Attack: compute the index on the same units and test episodes; compare the standardized paired difference between A and B with that of D̂.
+  - Refuted if: the index's standardized difference is at least that of D̂.
+  - Sensitive if: the index separates the positive-control model of 1.3 from A.
+  - Status: untested.
+- **8.5 EXP** The separability index of 8.3 does not separate A from B as well as D̂.
+  - Attack: compute the index on the same units and test episodes; compare the standardized paired difference between A and B with that of D̂.
+  - Refuted if: the index's standardized difference is at least that of D̂.
+  - Sensitive if: the index separates the positive-control model of 1.3 from A.
+  - Status: untested.
+- **8.6 EXP** The field-model quantity of 1.6 does not separate A from B as well as D̂.
+  - Attack: as 8.4 with error(i) − error(ii).
+  - Refuted if: its standardized difference is at least that of D̂.
+  - Sensitive if: as 8.4.
+  - Status: untested.
+- **8.7 EXP** A noise-corrected correlation does not separate A from B as well as D̂.
+  - Attack: as 8.4 with the r̂²_ER estimator of M.7.2's source applied to each heading pair.
+  - Refuted if: its standardized difference is at least that of D̂.
+  - Sensitive if: as 8.4.
+  - Status: untested.
 
-**Exact claim:** Under the fixed architecture, exposure, and training distribution specified below, objective B reduces the location transfer penalty without sacrificing useful absolute position accuracy relative to A.
+## Claim N — No cited prior work reports Claims 1–6
 
-- **Available evidence:** The original conditional fields motivate the question; no matched objective comparison exists. Published latent-objective improvements [S3] are motivation, not evidence for this visual assay.
-- **Test:** Paired A/B training; primary last-layer decoder and field analysis; evaluate learning curves, matched exposure, and a secondary comparison at similar validation prediction error.
-- **Best killing result:** Converged, competent A and B are practically equivalent in both transfer and absolute access, with intervals excluding the prespecified useful effect; or B reliably worsens transfer. An advantage disappearing after correction of data leakage or deficient baseline optimization also kills the proposed interpretation.
-- **Support criterion:** Replicated benefit beyond the practical margin, without collapse or poor within-heading performance, surviving declared split and learning-curve checks. If only training speed changes, claim improved acquisition efficiency instead of a different endpoint representation.
-- **Alternatives/confounds:** Extra optimization, latent-head capacity, loss scaling, generic feature quality, normalization, and uneven position support. Conditioning on achieved prediction accuracy is a sensitivity analysis, not a fully identified direct effect: prediction accuracy is itself downstream of objective.
-- **If killed:** Do not rescue the objective headline with cherry-picked neurons. A shared spatial mechanism could still support the reference-frame paper.
+- **N.1 CITE** Next-image prediction in this model family gives latents from which position can be decoded, with spatially localized units. Gornet & Thomson (2024), *Nature Machine Intelligence* 6, 820–833.
+  - Abstract: "While learning a next-image prediction task, the agent automatically constructs an internal representation of the environment that quantitatively reflects spatial distances."
+  - Results: "To measure the positional information in the predictive coder, we train a neural network to predict the agent’s position from the predictive coder’s latent units (Fig. 1a)."
+  - Results: "We demonstrate that each unit in the neural network’s latent space activates at distinct, localized regions—akin to place fields in the mammalian brain—in the environment’s physical space (Fig. 5a)."
+  - Methods: "The decoder architecture consists of several layers designed to extract this positional information: a convolutional layer transforms the input to a higher dimension (256), followed by a ReLU activation for non-linearity."
+- **N.2 CITE** The next-latent objective is published. Its authors did not analyze the learned representations. Teoh et al., "Next-Latent Prediction Transformers Learn Compact World Models", arXiv:2511.05963v4.
+  - §3.2: "NextLat additionally enforces transition consistency (Equation 2) of the hidden states by introducing a latent dynamics model p_ψ that predicts the next hidden state h_{t+1} directly from (h_t, X_{t+1})."
+  - Abstract: "Empirically, across benchmarks in world modeling, reasoning, planning, and language modeling, NextLat demonstrates significant gains over standard next-token prediction and other baselines in downstream accuracy, representation compression, and lookahead planning."
+  - §6: "On the analysis side, we do not study the structure of the learned representations under NextLat, leaving open questions about how the method shapes latent spaces."
+  - Their loss also has a KL term (their Eq. 5). Objective B in this plan does not.
+- **N.3 CITE** The guarantee for the next-latent objective assumes exact optimization. Teoh et al., §3.1.
+  - "Here we analyze an idealized next-latent prediction transformer which successfully optimizes both next-token prediction and next-latent prediction with respect to an underlying data distribution."
+- **N.4 CITE** Next-token prediction alone already gives linearly decodable belief states in transformers trained on hidden-Markov data. Shai et al. (2024), NeurIPS 37, arXiv:2405.15943.
+  - Abstract: "Leveraging the theory of optimal prediction, we anticipate and then find that belief states are linearly represented in the residual stream of transformers, even in cases where the predicted belief state geometry has highly nontrivial fractal structure."
+  - §4.4: "In the experiments we ran, we generated training data using HMMs."
+- **N.5 CITE** The closest reinforcement-learning study varied task and action space, not the loss. Vijayabaskaran & Cheng (2022), *PLoS Comput Biol* 18(10): e1010320.
+  - Results: "Hence, our simulations revealed that neither navigation strategy nor task demands alone determine the evolution of spatial representations, but rather a combination of the two (Fig 6B)."
+  - Methods: "Because the action space defines the reference frame in which navigation takes place, in our model, we view the strategy as being identical to the action space used."
+- **N.6 CITE** The closest transformer study varied the training data of GPT-2 models on grid paths, with the same next-token loss. Baumgartner, Spens, Burgess & Manescu (2025), arXiv:2511.13371v1.
+  - §1: "Here, we conduct a controlled experiment comparing models trained on exploratory random walks (Foraging Model) versus shortest-path finding (SP Models)."
+  - Abstract: "Using behavioural, representational and mechanistic analyses, we uncover two fundamentally different learned algorithms."
+- **N.7 CITE** Training input statistics change tuning in a recurrent head-direction network. Cueva, Wang, Chin & Wei (2020), ICLR, arXiv:1912.10189v2, §4.
+  - "When networks are trained with small angular velocities, we observe the presence of more units with strong head direction tuning but minimal angular velocity tuning."
+  - "Conversely, when networks are trained with large AV inputs, fewer Compass units emerge and more units become Shifter-like and exhibit both HD and AV tuning (Fig. 5c,f,i)."
+- **N.8 AXIOM** None of N.1–N.7 reports the effect of a latent-transition loss on spatial field shape, on cross-heading position decoding, or on where history is integrated in a visual prediction transformer. No closer work exists.
 
-### O1a — Improved location access preserves useful heading information
+## Parameters (all unset)
 
-**Exact subclaim:** B permits location transfer while retaining heading access and heading-sensitive native prediction.
+δ_D, δ_shift, δ_fit, δ_marg, δ_comp, δ_head, δ_G, δ_within, ε_within, ε_head, δ_turn, δ_mem, δ_mask, δ_swap, δ_equiv, δ_patch, δ_abl, δ_rest, δ_gen, δ_med, δ_int, ε_rank, ε_exp, N_seed, N_sector, N_rand, λ, the layer of z, the estimator version v.
 
-- **Available evidence:** Existing position × heading responses contain both variables; preservation under objective change is untested.
-- **Test:** Matched heading decoders plus natural heading interventions whose next images differ; inspect gain and spatial-shape changes independently.
-- **Best killing result:** B's apparent invariance is accompanied by meaningful loss of heading access and failure on heading-dependent native predictions, despite competent A and detectable heading in input baselines.
-- **Support criterion:** O1 passes, heading remains useful by a prespecified task threshold, and appropriate heading changes alter native outputs. Equal heading-probe accuracy is unnecessary; usable retention is the claim.
-- **Confounds:** Heading–position correlations, circular wrapping, underpowered heading probes, or current-view appearance shortcuts. A failed single probe is not proof that heading is absent.
-- **If killed:** Describe a tradeoff or information suppression, not selective access without erasure. O1 can still stand as a narrower result.
+## Axioms
 
-### O2 — B integrates spatial history into an intermediate state earlier than A
-
-**Exact claim:** On histories requiring memory, B integrates relevant spatial history into the current token at a specified intermediate boundary, reducing later native dependence on individual earlier observations relative to A. A stronger claim of a reusable state across future continuations is a conditional extension, not implied by this single-prediction result.
-
-- **Available evidence:** Two attention blocks permit history processing, but current static-repeat analyses do not test it. Ordinary prediction can form belief states [S4]; the A/B distinction must be discovered rather than assumed.
-- **Test:** Construct histories with the same current observation but different earlier disambiguating cues and different predictable futures. Also compare distinct histories leading to the same hidden state and future distribution. Preregister an intermediate boundary—for the two-block model, after the first attention/FFN block—and intervene on past-token access in the still-active second attention block while retaining the candidate current-token state. Compare intact execution, matched control masks, and candidate-state interchange at that boundary. Confirm that later retrieval paths exist and matter in a positive control. Removing history only after the final latent is computed is prohibited: a final latent feeding an image decoder is trivially sufficient for that already-computed prediction.
-- **Best killing result:** A sensitive intermediate-boundary assay shows equivalent or greater dependence of B on later past-token retrieval, contradicting the proposed earlier integration. A candidate capturing history identity but failing across histories with equivalent predictive consequences also defeats that state interpretation. If the target latent is predictable from the next-frame encoding alone, and native tests reveal no history-sensitive integration, the proposed compression explanation fails despite low auxiliary loss.
-- **Support criterion:** Intermediate candidate states predict held-out history equivalences, and B selectively preserves native predictions when later access to earlier observations is removed, with the candidate's role verified by interchange and controls. For the stronger future-continuation claim, separately specify exactly which existing token states/KV entries are retained, which past access is blocked, and which new continuation inputs are allowed; then test multiple held-out continuations through the original forward computation. Introducing a new recurrence, summary token, or auxiliary rollout head would test a modified model instead. If a valid native continuation assay is unavailable, report only intermediate integration.
-- **Confounds:** Current images identifying location, off-distribution truncation, temporal normalization, hidden cached context, and environmental uncertainty. Two identical observations need not imply identical belief states; select unambiguous histories or model the posterior explicitly. An identical-input/history baseline must demonstrate observable predictive information; a privileged pose oracle is only a task ceiling. A two-block model may have too little remaining computation at a proposed boundary to distinguish strategies; that is an assay limitation, not evidence of compact state. Blocking attention does not block temporal information carried by sequence-wide normalization: account for every cross-token route, or use a separately named, validated per-token-normalized model for the experiment.
-- **If killed:** Remove the state-versus-retrieval mechanism. O1 may remain a functional comparison; a shared mechanism can be studied independently.
-
-### O2a — An identifiable internal operation explains the objective-dependent strategy
-
-**Exact subclaim:** A specified layer/pathway operation, discovered on training examples, accounts for a meaningful part of the O2 difference in native predictions.
-
-- **Available evidence:** Named attention/feed-forward modules are intervention sites. No circuit has yet been identified; attention weights alone would not supply one.
-- **Test:** Write the candidate operation before confirmation—for example, retrieve an earlier landmark relation and update it using current orientation. Patch natural donor activations across matched cases, test the predicted output change, and perform a restoration experiment after selective disruption. Use held-out trajectories and matched-size/rank/activation-norm controls [S7].
-- **Best killing result:** Successful patches merely degrade outputs, fail predicted direction/composition, or act equally through matched unrelated components; restoration fails while positive controls demonstrate intervention sensitivity. A readout feature that can be steered but has no native selective role does not establish this claim.
-- **Support criterion:** Selective disruption and restoration, predicted counterfactual direction, and an account that generalizes to new examples. Cross-model interventions compare computational roles within each model, not unaligned neuron indices.
-- **Confounds:** Off-manifold swaps, layer-normalization side effects, selecting circuits on test cases, redundancy, and intervention-induced rather than native computation. A single failed ablation cannot rule out distributed/redundant implementations.
-- **If killed:** Drop the identified-mechanism claim. Report O2 as a constrained functional characterization only if its independent tests pass.
-
-### O3 — The altered computation improves a specified spatial generalization behavior
-
-**Exact claim:** The O2 computation contributes to better native prediction on novel spatial histories, rather than producing only a convenient external probe representation.
-
-- **Available evidence:** The project has conditional-field measurements; it lacks this objective-controlled behavioral link. External location access is not native competence.
-- **Test:** Reserve trajectory compositions or cue-gap lengths from training while preserving observable information. Compare native prediction against current-frame, short-history, and matched-capacity baselines. On the test family predicted by the proposed mechanism, intervene on that mechanism and quantify the selective loss and restoration of B's advantage.
-- **Best killing result:** B has better O1 scores but equal or worse native transfer within practical margins; or its behavioral advantage survives interventions that demonstrably remove the proposed computation while controls preserve general competence.
-- **Support criterion:** Replicated native transfer benefit and a selective causal contribution of the candidate operation. This is evidence for contribution, not proof that the measured invariance score is the sole mediator.
-- **Confounds:** Easier prediction targets, train/test sequence overlap, memorized routes, uncertainty differences, and image-error metrics dominated by background. Predefine a task-relevant region/contrast alongside full-image error when the distinctive spatial outcome occupies few pixels.
-- **If killed:** Frame O1 as accessibility, not demonstrated usefulness. A dissociation is suitable evidence for the third proposal concerning biological resemblance, if adequately replicated.
-
-### O4 — Experience changes the effect of the objective through a specified training statistic
-
-**Extension claim:** After O0 is established, changing exposure to rotational versus translational transitions changes the objective effect on calibrated conditional shape dispersion. Moderation of transfer or native computation is a separately specified extension using O1–O3 outcomes.
-
-- **Available evidence:** Experience-dependent compass/shifter organization in Wei's recurrent model is a precedent [S5]. The current project contains no controlled experience intervention in a transformer.
-- **Test:** A full two-objective × two-experience design, evaluated on one common test distribution with one calibrated assay specification. Define experience as a concrete transition statistic; balance total observation exposure and audit occupancy, headings, transition predictability, and context length. Estimate the primary shape-score interaction `(B−A)_E2 − (B−A)_E1` separately from each main effect; independent field fits must verify that it concerns shape. Register any transfer/native-computation interactions separately.
-- **Best killing result:** A sufficiently precise near-zero interaction rules out the proposed moderation, or apparent interaction disappears when unequal support/optimization is repaired. A main effect of experience alone does not support an interaction claim.
-- **Support criterion:** Replicated calibrated shape interaction beyond a declared margin, confirmed independently of the score. A claim that experience moderates the O2 mechanism additionally requires the predicted causal-signature change. If distributions necessarily differ on multiple statistics, narrow the causal treatment to the complete experience regime.
-- **Confounds:** Coverage, aliasing, loss entropy, velocity, and transition difficulty. Shuffling frames changes the prediction task, not just naturalness; it is a diagnostic destructive control, not a clean experience contrast.
-- **If killed:** Remove “and experience” from the explanatory headline. Objective-only or independent experience effects remain possible. Do not expand to this factorial study before the pilot justifies it.
-
-## Concrete two-objective pilot specification
-
-**Environment first.** Recover upstream trajectories if practical. Otherwise use the existing panorama images as a deterministic lookup renderer indexed by pose. Define an explicit graph and stochastic movement policy, and save transitions, episode boundaries, headings, and the random generator state. Validate traversability; do not infer historical trajectories by sorting filenames. Split complete episodes, with a separate held-out composition set. Keep pose labels for evaluation only. Both objectives receive exactly the same histories and prediction targets.
-
-For native-memory tests, include controlled observation aliasing or short cue occlusions in **both training and evaluation distributions**. First show that history improves attainable prediction over a current-image baseline. Without this property O2 has no meaningful test. If actions are introduced to reduce transition uncertainty, give them identically to both models and label the experiment a new action-conditioned architecture; the supplied `get_latents(..., actions=...)` signature does not establish actual action use.
-
-**Model gate.** Strictly load/check the historical checkpoint for descriptive work. For new training, verify prefix causality: perturb later supplied frames and check earlier predictions. The local code normalizes `f` with `F.layer_norm(f, f.shape[1:])` for `[B,L,C,H,W]`, so normalization spans time. Encoder BatchNorm also sees flattened batch × time during training. Causal attention alone therefore does not establish causal per-token training. This is a code-based concern requiring an executable test, not a demonstrated defect in historical results. Preserve the historical model; use a separately named corrected/new model for matched objective training if needed. Never silently repair the architecture and call it the same checkpoint.
-
-**Proposed fixed contrast.** Use identical backbones and image prediction heads, trained from paired initializations. A minimizes `L_pred`, the mean squared error of the next normalized RGB image over pixels, channels, and valid timesteps; retain raw-RGB evaluation errors too. B minimizes `L_pred + λ L_lat`, where `L_lat = mean_t SmoothL1(q_phi(z_t, stopgrad(e_(t+1))), stopgrad(z_(t+1)))`; `e` is the next observed frame's encoder representation, and `z` is the specified final-token state. Average the latent loss over feature dimensions and valid timesteps. Predicting the next latent from current state and the next observation follows the published NextLat idea [S3]; this continuous-image adaptation is **not** a reproduction or new algorithm claim. Targets never enter the causal backbone's earlier inputs. Use stop-gradient on target states; log state variance, rank, and prediction competence to detect collapse.
-
-Train an identical auxiliary head in A on detached backbone features, so head capacity/data exposure are matched but the auxiliary gradient does not shape A's backbone. Verify gradients explicitly. The detached-head control does not perfectly equate useful optimization effort; report wall time, updates, gradient scales, and learning curves. Select `λ`, optimization settings, and stopping criteria on an equal declared validation budget. Include `λ=0` as A, retain all pilot settings, and freeze one contrast for independent confirmation. Do not choose the winning objective strength on held-out spatial claims. An optional invariance-supervised positive control calibrates assays; it cannot establish spontaneous invariance.
-
-For an implementable initial head, flatten the complete specified `z` and encoder tensor `e` per timestep to dimension `d` (verify equality), concatenate them, and use `Linear(2d,256) → GELU → Linear(256,d)`. This fixed bottleneck is a proposed design choice; record its parameter count and benchmark it before committing runs. Do not tune head capacity on confirmatory spatial outcomes. In A, the auxiliary head still trains at the same loss weight as B but both of its backbone inputs are detached; “λ=0” means zero **backbone** auxiliary gradient, not disabling the matched head's training.
-
-The loss has a serious current-view shortcut: `e_(t+1)` may predict `z_(t+1)` without `z_t`. On frozen backbones fit a same-capacity next-frame-only control, implemented by zeroing the first input half, and test the trained full head's dependence on `z_t`. Include identical-next-frame examples whose valid history-dependent target states differ. If next-frame-only prediction matches the full predictor, low latent loss does not establish temporal compression. Native O2 tests, independent of this auxiliary head, decide whether useful integration occurred. State collapse and current-view copying are distinct alternatives and must both be reported.
-
-**Measurements and intervention order.** Cache complete spatial tensors with module/time metadata, not just a sampled flattened unit set. Establish M1/M2 and test O0 alongside O1 before searching mechanisms. Build O2's history-equivalence challenge before searching circuits. Localize candidate contributions using module interventions; add head/path instrumentation only when needed. Evaluate the backbone's own image decoder, with the auxiliary head excluded, for O2a/O3. A loss that trains the auxiliary head to update state cannot use that head's success as independent mechanistic confirmation.
-
-## Execution deliverables, decisions, and feasible scope
-
-The implementing agent should create a separate experiment package and preserve original results. Required outputs are: a file/checkpoint hash manifest; environment and split specification; causality/gradient/calibration checks; frozen A/B configuration; training curves and checkpoints; episode-level evaluation table; claim-by-claim verdict table; and a patching registry containing candidate, donor/recipient rule, control, predicted effect, observed effect, and discovery/confirmation designation. Existing caches must carry provenance or be regenerated. Missing assets should be recorded as missing, not silently replaced.
-
-Run small data-loading and optimization smoke tests, then measure actual resource use before committing replication or giving time estimates. The lowest-cost reusable work is asset validation and descriptive reanalysis. Training plus independent seeds, native-memory challenges, and circuit interventions are new work; simulator recovery or new rendering may dominate effort. No hardware estimate is justified by the existing review alone.
-
-**Stopping rules:** failed causality, leakage, collapse, or an impossible memory task invalidates the test and calls for repair. A competent and precise O0 null stops the proposed objective-dependent shape headline. An O1 null stops the positive access implication, while a surviving O0 may support a carefully delimited dissociation. A positive O1 with O0 failure supports an access result that has not validated method centrality. O2/O3 failures remove the corresponding mechanism/usefulness claims. Expand to O4 only after objective results and measurement precision justify it.
-
-A workshop paper could contain the characterized correlation assay, fair comparison with existing shape methods, one replicated O0 distinction and its independent validation or informative dissociation. A mechanistic expansion adds O2a/O3. If the eventual contribution is only another objective improving a familiar benchmark, the method-centered contribution is unestablished; seek a specific explanatory result or reconsider scope. The closest assay comparators and citations are specified in [METHOD_CENTRAL_CLAIMS.md](METHOD_CENTRAL_CLAIMS.md).
-
-## Primary sources and their roles
-
-- **[S1] Vijayabaskaran & Cheng (2022).** [Navigation task and action space drive the emergence of egocentric and allocentric spatial representations](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1010320), *PLOS Computational Biology*. Closest established background for task-dependent coordinate organization; prevents claiming that general observation as new.
-- **[S2] Baumgartner et al. (2025).** [Cognitive Maps in Language Models: A Mechanistic Analysis of Spatial Planning](https://arxiv.org/html/2511.13371v1), inspected preprint v1. Relevant transformer task comparison with causal analysis. A new paper needs a controlled effect and explanatory mechanism beyond another differing training regime.
-- **[S3] Teoh et al.** [Next-Latent Prediction Transformers Learn Compact World Models](https://arxiv.org/html/2511.05963v4), inspected June 2026 preprint revision. Supplies an existing latent-transition intervention; its theoretical sufficient-state conditions do not establish those conditions or spatial invariance in our finite trained model.
-- **[S4] Shai et al. (2024).** [Transformers Represent Belief State Geometry in their Residual Stream](https://proceedings.neurips.cc/paper_files/paper/2024/hash/8936fa1691764912d9519e1b5673ea66-Abstract-Conference.html), *NeurIPS*. Counterweight to a universal “next-token prediction cannot learn state” narrative.
-- **[S5] Cueva, Wang, Chin & Wei (2020).** [Emergence of functional and structural properties of the head direction system by optimization of recurrent neural networks](https://arxiv.org/html/1912.10189), *ICLR*. Computational and experience-based precedent for useful conjunctive responses. Angular velocity in this study is not translational movement direction.
-- **[S6] Xiong et al. (2026).** [Large language models reorganize representational geometry during in-context learning](https://arxiv.org/html/2605.28854), inspected author preprint. Connects Wei's program to transformer representation and algorithm questions; no empirical spatial prediction is imported from it.
-- **[S7] Zhang & Nanda (2024).** [Towards Best Practices of Activation Patching in Language Models: Metrics and Methods](https://proceedings.iclr.cc/paper_files/paper/2024/file/06a52a54c8ee03cd86771136bc91eb1f-Paper-Conference.pdf), *ICLR*. Motivates testing intervention metrics and corruption choices rather than trusting one patching setup.
+- N.8.
+- The margins above, once set, are the smallest differences that matter.

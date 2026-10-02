@@ -4,7 +4,7 @@ This companion supplies repository provenance, verified reusable assets, impleme
 
 ## Documents and intended use
 
-**Current method-centered contract:** [METHOD_CENTRAL_CLAIMS.md](METHOD_CENTRAL_CLAIMS.md) is the shared scientific entry point. The correlation assay is the proposed principal measure of conditional shape stability, subject to M1–M4 and each plan's O0/F0/U0 application claim. Independent fits, readouts and interventions test what the assay reveals; they do not automatically replace it. If a replacement carries the result, record that the contribution has changed. The method may remain central without a claim of a fundamentally new correlation principle.
+**Current method-centered contract:** Claim M in each plan file is the shared entry point (the former METHOD_CENTRAL_CLAIMS.md was folded into it). The correlation score is the proposed principal measure of field-shape stability across heading, subject to Claim M and to the comparison claims (01 Claim 8; 02 leaves 3.7–3.8; 03 Claim 7).
 
 - [Objectives and experience](01_OBJECTIVES_AND_EXPERIENCE.md): intervene on training pressure and test changes in representation and computation.
 - [Reference frames](02_REFERENCE_FRAMES.md): test whether a specified physical coordinate system explains apparent entanglement and is used by the model.
