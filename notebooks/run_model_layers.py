@@ -11,7 +11,7 @@ Env:
   EV_DEVICE  mps | cpu | cuda              (default: mps)
 """
 import os, sys, json, glob
-ROOT = "/Users/moo/variance_analysis"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT); sys.path.insert(0, ROOT)
 import numpy as np, torch
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
@@ -135,12 +135,6 @@ def run_layer(model_name, layer_name):
     scores_fp, _ = score_neurons([flat_p], cfg, base_dir=current_file_path, sample_partial=False,
                                  pixel_min_threshold=1, use_old_place_method=False, n_visits=1)
     chart = np.load(scores_fp, allow_pickle=True)
-    # numpy-2.x safety: cols 0 (active) & 1 (n_clusters) are stored as 1-element
-    # arrays; classify_neurons does int()/indexing on them. Coerce to scalars.
-    # (cols 2,3 stay arrays — they're variable-length and used with .extend().)
-    for i in range(chart.shape[0]):
-        for col in (0, 1):
-            chart[i, col] = np.asarray(chart[i, col]).ravel()[0]
     classes = classify_neurons(chart)
     place = np.asarray(classes["exclusive_place_cells_indices"])
     is_place = np.isin(np.arange(n_neu), place); print(f"  {len(place)} place cells")

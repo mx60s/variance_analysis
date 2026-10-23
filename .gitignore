@@ -1,21 +1,14 @@
 **/.DS_Store
 **/.ipynb_checkpoints
-data/dusz/*
-data/pfeiffer/*
-data/minecraft/*
-weights/*
-results/rodents/*
-results/anns/*
 **/__pycache__
-ann_datasets/
 *.egg-info
-results/*
 
-# added 2026-09-14: keep data, results, logs, envs and build products out of the repo
+# data, results, logs, envs and build products stay out of the repo
 data/
 results/
 logs/
 .venv/
+.claude/
 *.zip
 figs/*.svg
 Spatial_maps_in_CNNs/manuscript.pdf

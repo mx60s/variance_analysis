@@ -4,7 +4,10 @@ Generate a schematic figure explaining the cross-fold correlation
 explained variance method, with equations.
 """
 
+import os
 import numpy as np
+
+FIGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'figs')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.ndimage import gaussian_filter
@@ -256,9 +259,9 @@ ax_eq.text(0.5, 0.65, eq_text, transform=ax_eq.transAxes,
 fig.suptitle('Cross-Fold Correlation Method for Decomposing Stimulus Contributions',
              fontsize=14, fontweight='bold', y=0.95)
 
-fig.savefig('/Users/moo/variance_analysis/figs/method_schematic.pdf',
+fig.savefig(os.path.join(FIGS, 'method_schematic.pdf'),
             dpi=200, bbox_inches='tight', facecolor='white')
-fig.savefig('/Users/moo/variance_analysis/figs/method_schematic.png',
+fig.savefig(os.path.join(FIGS, 'method_schematic.png'),
             dpi=200, bbox_inches='tight', facecolor='white')
 
 print("Saved to figs/method_schematic.pdf and .png")

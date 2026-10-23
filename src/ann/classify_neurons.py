@@ -18,8 +18,16 @@ def classify_neurons(neuron_chart_info):
     Given a neuron_chart_info, classify the neurons into different types,
     and return the indices of neurons by type or combo of types.
     """
+    # cols 0 (active) and 1 (n_clusters) can be stored as 1-element arrays, which
+    # numpy 2 won't implicitly convert to int; coerce them to scalars.
+    # (cols 2, 3 stay arrays: they're variable-length and used with .extend().)
+    neuron_chart_info = neuron_chart_info.copy()
+    for i in range(neuron_chart_info.shape[0]):
+        for col in (0, 1):
+            neuron_chart_info[i, col] = np.asarray(neuron_chart_info[i, col]).ravel()[0]
+
     dead_neurons_indices = []
-    max_num_clusters = np.max(neuron_chart_info[:, 1])  # global max used for setting xaxis.
+    max_num_clusters = int(np.max(neuron_chart_info[:, 1]))  # global max used for setting xaxis.
     num_clusters = np.zeros(max_num_clusters+1)
     cluster_sizes = []
     cluster_peaks = []

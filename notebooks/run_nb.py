@@ -12,7 +12,7 @@ and plotly write_image failures (kaleido/chrome) are logged rather than fatal.
 """
 import argparse, json, os, sys, time, traceback, re
 
-ROOT = "/Users/moo/variance_analysis"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def parse_ranges(s, n):
     if not s:

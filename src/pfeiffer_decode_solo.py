@@ -766,8 +766,8 @@ def build_spike_rates(spike_times: np.ndarray, base_time: np.ndarray, tau: float
 
 def decode_solo(
     *,
-    data_path: str = "/home/mag/variance-analysis/data/pfeiffer",
-    save_path: str = "/home/mag/variance-analysis/results/pfeiffer",
+    data_path: str = "./data/rodents/pfeiffer",
+    save_path: str = "./results/rodents/pfeiffer",
     rat: str = "1",
     n_hd_bins: int = 360,
     n_xy_bins: int = 100,
@@ -1031,13 +1031,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--data_path",
         type=str,
-        default="/home/mag/variance-analysis/data/pfeiffer",
+        default="./data/rodents/pfeiffer",
         help="Root data directory (contains Rat{rat}/Open1)",
     )
     parser.add_argument(
         "--save_path",
         type=str,
-        default="/home/mag/variance-analysis/results/pfeiffer",
+        default="./results/rodents/pfeiffer",
         help="Directory to write outputs",
     )
     

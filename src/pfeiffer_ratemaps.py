@@ -181,8 +181,8 @@ def get_fold_ratemaps(args: Optional[argparse.Namespace] = None, /, **overrides:
             setattr(args, k, v)
 
     d = args.__dict__
-    d.setdefault("data_path", "/home/mag/variance-analysis/data/pfeiffer")
-    d.setdefault("save_path", "/home/mag/variance-analysis/results/pfeiffer")
+    d.setdefault("data_path", "./data/rodents/pfeiffer")
+    d.setdefault("save_path", "./results/rodents/pfeiffer")
     d.setdefault("rat", "1")
     d.setdefault("n_hd_bins", 90)
     d.setdefault("n_loc_bins", 100) 

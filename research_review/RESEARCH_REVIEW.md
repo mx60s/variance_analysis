@@ -1,6 +1,6 @@
 # Spatial tuning, invariance, and the paper’s next contribution
 
-**Current planning update:** the [method-centered hypothesis packet](hypothesis_plans/README.md) now makes the correlation assay a candidate central contribution. Its [M1–M4 claims](hypothesis_plans/METHOD_CENTRAL_CLAIMS.md) test target definition, calibration, comparative value and independent scientific validation. This changes the proposed emphasis, not the mathematical audit below; existing sources and historical code findings should retain their stated scope.
+**Current planning update:** the [method-centered hypothesis packet](hypothesis_plans/README.md) now makes the correlation assay a candidate central contribution. Its [Claim M in each plan](hypothesis_plans/README.md) test target definition, calibration, comparative value and independent scientific validation. This changes the proposed emphasis, not the mathematical audit below; existing sources and historical code findings should retain their stated scope.
 
 **Recommendation: continue the project, but make the next step a bounded validation and reframing effort. The manuscript needs substantive analytical repair before its principal quantitative claims are defensible. Its strongest opportunity is a comparison of conditional tuning stability and spatial generalization across biological and artificial representations.** A new universal variance-decomposition method, a general refutation of vision-based cognitive maps, and a demonstration that head-direction cells cannot support path integration are not supported by the present evidence.
 
@@ -67,7 +67,7 @@ For joint response h(x,y), the implemented statistic is
 D_x=1-\operatorname{mean}_{i\ne j}\operatorname{corr}\{\hat h_0(x_i,\cdot),\hat h_1(x_j,\cdot)\}.
 \]
 
-The code returns the off-diagonal mean and diagonal reliability; the notebook constructs one minus the former. It does not calculate a residual sum of squares, an explained-variance ratio, or an orthogonal variance decomposition. See [implementation](/Users/moo/explained_variance/src/explained_variance.py:121) and the [independent mathematical/code audit](/Users/moo/variance_analysis/research_review/source_notes/method_audit.md).
+The code returns the off-diagonal mean and diagonal reliability; the notebook constructs one minus the former. It does not calculate a residual sum of squares, an explained-variance ratio, or an orthogonal variance decomposition. See [implementation](../src/explained_variance.py) and the [independent mathematical/code audit](source_notes/method_audit.md).
 
 Three simple cases settle the interpretation without any literature-dependent judgment:
 
@@ -105,11 +105,11 @@ For shape stability, compare a cross-validated hierarchy: a shared tuning curve;
 
 ## 4. Problems requiring correction before rewriting conclusions
 
-**The GLM example has a ground-truth problem.** The exported notebook computes actual ground-truth slices and then replaces them with their mean levels under the comment “\"True\" displayed as flat lines.” Those arrays are returned as true_fx and true_gy. This establishes an error in that local plotting path, not the provenance of every historical figure. Independently, the stated Gaussian-ridge model has nonflat marginals under independent Gaussian sampling. The PDF caption’s flat-marginal assertion is therefore wrong under its own Methods. See [notebook export](/Users/moo/variance_analysis/research_review/source_notes/notebook_exports/glm.py:234). Regenerate the demonstration from an explicit mathematical target.
+**The GLM example has a ground-truth problem.** The exported notebook computes actual ground-truth slices and then replaces them with their mean levels under the comment “\"True\" displayed as flat lines.” Those arrays are returned as true_fx and true_gy. This establishes an error in that local plotting path, not the provenance of every historical figure. Independently, the stated Gaussian-ridge model has nonflat marginals under independent Gaussian sampling. The PDF caption’s flat-marginal assertion is therefore wrong under its own Methods. See [notebook](../notebooks/glm.ipynb). Regenerate the demonstration from an explicit mathematical target.
 
 **Model folds change a biological variable.** Camera pitches are deterministic input conditions, not repeated noisy observations of exactly the same state. The local split uses two different pitch sets. Unless their effects are controlled or distributions balanced, the resulting correlation combines location/HD structure with pitch sensitivity. This can be a valuable pitch-generalization test, but cannot be called measurement-noise correction. For a deterministic model on a complete stimulus grid, first analyze the noiseless map directly at fixed pitch; treat pitch and history as additional conditions.
 
-**The predictive model is evaluated with repeated static images.** The notebook constructs ten identical frames and reads the last timestep. This may be a legitimate stationary-input test, but it cannot alone establish failure of the temporal representation learned during navigation. Also, the loader silently leaves the model randomly initialized when the checkpoint path is absent. The checkpoint is absent from this local folder; that does not prove that the historical results used an untrained model. It does mean their provenance must be recovered. See [evaluation](/Users/moo/variance_analysis/research_review/source_notes/notebook_exports/model_units.py:195) and [loader](/Users/moo/explained_variance/src/ann/get_activations.py:95).
+**The predictive model is evaluated with repeated static images.** The notebook constructs ten identical frames and reads the last timestep. This may be a legitimate stationary-input test, but it cannot alone establish failure of the temporal representation learned during navigation. Also, the loader silently leaves the model randomly initialized when the checkpoint path is absent. The checkpoint is absent from this local folder; that does not prove that the historical results used an untrained model. It does mean their provenance must be recovered. See [evaluation](../notebooks/model_neurons.ipynb) and [loader](../src/ann/get_activations.py).
 
 **Spatial preprocessing needs a geometry audit.** The model notebook smooths a flattened location index as one spatial axis. Flattened-index neighbors do not implement an isotropic neighborhood on the two-dimensional arena, and row boundaries can connect inappropriate locations. Smooth X, Y and circular HD in their actual geometry before any flattening. Upsampling to equalize axis sizes creates no independent observations and should not establish the fairness of axis comparisons.
 
@@ -121,7 +121,7 @@ For shape stability, compare a cross-validated hierarchy: a shared tuning curve;
 
 ## 5. Literature that changes the interpretation
 
-The annotated [methods review](/Users/moo/variance_analysis/research_review/source_notes/literature_methods.md) and [spatial neuroscience/model review](/Users/moo/variance_analysis/research_review/source_notes/literature_spatial.md) provide the wider source inventory and comparisons. The following are the consequential connections, not just papers to add to the bibliography.
+The annotated [methods review](source_notes/literature_methods.md) and [spatial neuroscience/model review](source_notes/literature_spatial.md) provide the wider source inventory and comparisons. The following are the consequential connections, not just papers to add to the bibliography.
 
 | Literature family | Consequence for this paper | Appropriate response |
 |---|---|---|
@@ -237,7 +237,7 @@ The folder contains the manuscript, five notebooks, estimator and ANN code, Mine
 
 The literature and mathematical issues do not depend on recovering those files. The exact size and robustness of the biological/model gap do. The supplied synthetic checks examine the estimator and local code path, not the truth of every manuscript result. No expensive training, raw-data download or alteration to the original source or manuscript was undertaken.
 
-Run the lightweight audit from the project directory with `.venv/bin/python research_review/method_diagnostics.py`. It regenerates the [diagnostic results](/Users/moo/variance_analysis/research_review/source_notes/method_diagnostics.json) and inspects the six existing ANN archives. It does not reproduce the manuscript figures. The additive, multiplicative and pure-axis counterexamples were additionally checked by importing the original estimator module directly.
+Run the lightweight audit from the project directory with `.venv/bin/python research_review/method_diagnostics.py`. It regenerates the [diagnostic results](source_notes/method_diagnostics.json) and inspects the six existing ANN archives. It does not reproduce the manuscript figures. The additive, multiplicative and pure-axis counterexamples were additionally checked by importing the original estimator module directly.
 
 **Decision:** there is enough here to justify a focused salvage effort with a workshop-sized stopping point. There is not enough to justify a cosmetic rewrite or an unconditional commitment to the original conclusion. First establish a calibrated, reproducible comparison of response modulation and tuning-shape preservation. Add population generalization when pursuing the broader functional story, and be prepared to report that these properties dissociate.
 
@@ -245,7 +245,7 @@ Run the lightweight audit from the project directory with `.venv/bin/python rese
 
 The full primary-source bibliography, including publication status and source-specific caveats, is in the two annotated reviews below. Direct citations throughout this report identify the sources supporting the claims immediately around them.
 
-- [Methods literature and statistical alternatives](/Users/moo/variance_analysis/research_review/source_notes/literature_methods.md).
-- [Spatial neuroscience, visual models and biological counterexamples](/Users/moo/variance_analysis/research_review/source_notes/literature_spatial.md).
-- [Mathematical and implementation audit](/Users/moo/variance_analysis/research_review/source_notes/method_audit.md).
+- [Methods literature and statistical alternatives](source_notes/literature_methods.md).
+- [Spatial neuroscience, visual models and biological counterexamples](source_notes/literature_spatial.md).
+- [Mathematical and implementation audit](source_notes/method_audit.md).
 - Source manuscript: *Spatial_maps_in_CNNs_revised_20260914.pdf*, especially pp. 3–7, 11–17, 19–26 and 30–33.

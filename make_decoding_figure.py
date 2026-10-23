@@ -3,7 +3,10 @@
 Generate a schematic figure explaining the 1D Bayesian decoding analysis.
 """
 
+import os
 import numpy as np
+
+FIGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'figs')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.ndimage import gaussian_filter1d
@@ -241,9 +244,9 @@ ax_eq.text(0.05, 0.95, eq_text, transform=ax_eq.transAxes,
 fig.suptitle('1D Bayesian Population Decoding',
              fontsize=15, fontweight='bold', y=0.96)
 
-fig.savefig('/Users/moo/variance_analysis/figs/decoding_schematic.pdf',
+fig.savefig(os.path.join(FIGS, 'decoding_schematic.pdf'),
             dpi=200, bbox_inches='tight', facecolor='white')
-fig.savefig('/Users/moo/variance_analysis/figs/decoding_schematic.png',
+fig.savefig(os.path.join(FIGS, 'decoding_schematic.png'),
             dpi=200, bbox_inches='tight', facecolor='white')
 
 print("Saved to figs/decoding_schematic.pdf and .png")

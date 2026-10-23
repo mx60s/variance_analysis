@@ -92,7 +92,9 @@ def _make_predictive_coder(
         seq_len=seq_len,
     ).to(device)
 
-    if weights_path and weights_path.exists():
+    if weights_path is not None:
+        if not weights_path.exists():
+            raise FileNotFoundError(f"Predictive coder checkpoint not found: {weights_path}")
         net.load_state_dict(torch.load(weights_path, map_location=device))
     net.eval()
     return net

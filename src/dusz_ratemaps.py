@@ -320,8 +320,8 @@ def get_ratemaps(args: Optional[argparse.Namespace] = None, /, **overrides: Any)
             setattr(args, k, v)
 
     d = args.__dict__
-    d.setdefault("data_path", "./data/dusz")
-    d.setdefault("save_path", "./results/dusz")
+    d.setdefault("data_path", "./data/rodents/dusz")
+    d.setdefault("save_path", "./results/rodents/dusz")
     d.setdefault("dataset", None)
     d.setdefault("rat", None)
     d.setdefault("mode", "xyhd")
@@ -428,9 +428,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Make rate maps: XY×HD or HD×MD."
     )
-    parser.add_argument("--data_path", type=str, default="./data/dusz",
+    parser.add_argument("--data_path", type=str, default="./data/rodents/dusz",
                         help="Root data dir containing Dataset_{id}/{rat}/Data")
-    parser.add_argument("--save_path", type=str, default="./results/dusz",
+    parser.add_argument("--save_path", type=str, default="./results/rodents/dusz",
                         help="Directory to write outputs")
     parser.add_argument("--dataset", type=int, required=True, help="Dataset number (int)")
     parser.add_argument("--rat", type=str, required=True, help="Rat ID (e.g., 'R1')")

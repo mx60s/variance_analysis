@@ -2,7 +2,7 @@
 
 For the subsequent hypothesis-by-hypothesis implementation briefs, see the [three-plan packet](hypothesis_plans/README.md). It includes explicit falsifiers, exact reusable assets, experimental gates, and decisions for narrowing or abandoning each narrative.
 
-**Current framing update:** the packet now explicitly tests the correlation assay as a central contribution through [shared method claims](hypothesis_plans/METHOD_CENTRAL_CLAIMS.md) and O0/F0/U0 application claims. The broader mechanism discussion below supplies scientific context; its earlier permissive treatment of the assay as optional is superseded for this method-centered pass. Centrality remains conditional on calibration and demonstrated value.
+**Current framing update:** the packet now explicitly tests the correlation assay as a central contribution through [shared method claims](hypothesis_plans/README.md) and O0/F0/U0 application claims. The broader mechanism discussion below supplies scientific context; its earlier permissive treatment of the assay as optional is superseded for this method-centered pass. Centrality remains conditional on calibration and demonstrated value.
 
 **The strongest joint direction is to use training objectives as an intervention, reference-frame computation as the candidate mechanism, and generalization as the functional test.** Biological resemblance then becomes something to explain and evaluate. This accommodates an interest in transformer mechanisms while remaining close to Xue-Xin Wei’s work on learned navigation circuits and representational geometry.
 

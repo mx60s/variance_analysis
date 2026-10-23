@@ -910,8 +910,8 @@ def decode_solo(
     dataset: int,
     rat: str,
     *,
-    data_path: Union[str, Path] = "./data/dusz",
-    save_path: Union[str, Path] = "./results/dusz",
+    data_path: Union[str, Path] = "./data/rodents/dusz",
+    save_path: Union[str, Path] = "./results/rodents/dusz",
     n_hd_bins: int = 360,
     n_md_bins: int = 360,
     md_smooth_window: int = 20,
@@ -1240,8 +1240,8 @@ def decode_solo(
 
 def main():
     parser = argparse.ArgumentParser(description="HD/MD/XY tuning + Bayesian decoding with CV (Dusz)")
-    parser.add_argument("--data_path", type=str, default="./data/dusz", help="Root data dir containing Dataset_{id}/{rat}/Data")
-    parser.add_argument("--save_path", type=str, default="./results/dusz", help="Directory to write outputs")
+    parser.add_argument("--data_path", type=str, default="./data/rodents/dusz", help="Root data dir containing Dataset_{id}/{rat}/Data")
+    parser.add_argument("--save_path", type=str, default="./results/rodents/dusz", help="Directory to write outputs")
     parser.add_argument("--dataset", type=int, required=True, help="Dataset number (int)")
     parser.add_argument("--rat", type=str, required=True, help="Rat ID (e.g., 'R1')")
 

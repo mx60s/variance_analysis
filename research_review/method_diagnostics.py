@@ -89,7 +89,7 @@ results["glm_true_marginal_theta45"] = {"x":xx.tolist(),"marginal":mx.tolist()}
 
 # Inventory stored summaries and check possible complement / axis transformations.
 cache=[]
-for p in sorted((ROOT/'results/ann').glob('*/ev_all_units_pitch*.npz')):
+for p in sorted((ROOT/'results/ann').glob('*/ev_all_neurons_pitch*.npz')):
     with np.load(p) as d:
         if not {'ev_v1','ev_v2'} <= set(d.files): continue
         a,b=np.asarray(d['ev_v1']),np.asarray(d['ev_v2'])
@@ -104,7 +104,7 @@ for p in sorted((ROOT/'results/ann').glob('*/ev_all_units_pitch*.npz')):
             row['place_median_v1']=float(np.median(a[mask]))
             row['place_median_v2']=float(np.median(b[mask]))
         if p.name.endswith('_corr.npz'):
-            other=p.with_name('ev_all_units_pitch.npz')
+            other=p.with_name('ev_all_neurons_pitch.npz')
             if other.exists():
                 with np.load(other) as o:
                     oa,ob=np.asarray(o['ev_v1']),np.asarray(o['ev_v2'])
