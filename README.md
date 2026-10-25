@@ -38,7 +38,7 @@ On a CUDA machine you can also install `xformers`. `src/ann/predictive_coder.py`
 
 ## Data
 
-None of the data is in the repository. Put it under `data/` in the repo root like this; only the files listed are read:
+None of the data is in the repository. The shared Google Drive folder has exactly the files below; copy its `data/` folder into the repo root. Only these files are read:
 
 ```
 data/
@@ -57,11 +57,13 @@ data/
 ```
 
 - **Pfeiffer & Foster 2013** (Nature 497:74–79): CA1 place cells from 4 rats navigating an open arena. Only the `Open1` session is used.
-- **Duszkiewicz et al. 2024** (Nat Neurosci 27:782–792): postsubiculum recordings in mice. The data is public; see the paper's data availability statement. Only Datasets 1 and 2 are used, and within them only the square-arena sessions, chosen from `Dataset_metadata.xlsx`. Session `Dataset_2/A5506-200914a` has no `Tracking_data.csv` and is skipped.
+- **Duszkiewicz et al. 2024** (Nat Neurosci 27:782–792): postsubiculum recordings in mice. The data is public; see the paper's data availability statement. Only Datasets 1 and 2 are used, and within them only the square-arena sessions, chosen from `Dataset_metadata.xlsx`.
 - **Minecraft panoramas**: first-person views recorded with the Malmo platform at every block of a 17x17 area. The recording script is not in this repository.
 - **Predictive coder checkpoint**: our own training of the architecture from Gornet & Thomson 2024 ([jgornet/predictive-coding-recovers-maps](https://github.com/jgornet/predictive-coding-recovers-maps)). The training code is not in this repository. `load_model` raises an error if the checkpoint is missing. ResNet-50 and VGG16 use the torchvision ImageNet weights, which download automatically.
 
-Generated files go to `results/` (rate maps, EV values, decoding output) and `data/ann_activations/` (cached network activations; the pitch set is about 3 GB per layer). Both can be regenerated, but it takes a while.
+Generated files go to `results/` (rate maps, EV values, decoding output) and `data/ann_activations/` (cached network activations; the pitch set is about 3 GB per layer). The Drive folder includes the rodent `results/` and the activation caches for the layers in the paper. Everything there can be regenerated, but the network activations take a while.
+
+The rate-map builders split each bin's samples into the two folds at random, with a fixed seed (`seed=0`), so a rerun gives identical results.
 
 ## Running
 
@@ -100,7 +102,7 @@ These are the numbers in the manuscript:
 
 - Place cells: EV_xy > EV_hd for 99% of cells (n = 551).
 - HD cells: EV_hd > EV_xy for 94% of cells (n = 1,489, 30 sessions).
-- HD vs MD: EV_hd > EV_md for 100% of cells (n = 1,465).
+- HD vs MD: EV_hd > EV_md for 100% of cells (n = 1,489). The manuscript says n = 1,465 because session `A5506-200914a` was missing its tracking file when that analysis was run. It is included now.
 - Trained network layers lie on the diagonal (EV_xy ≈ EV_hd ≈ 0.9). The untrained ResNet-50 is the exception.
 
 Some caveats on the place-cell HD result:

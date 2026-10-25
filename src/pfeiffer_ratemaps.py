@@ -190,6 +190,8 @@ def get_fold_ratemaps(args: Optional[argparse.Namespace] = None, /, **overrides:
     d.setdefault("vel_threshold", 5.0)
     d.setdefault("filter_vel", True)
     d.setdefault("floor", 5)
+    d.setdefault("seed", 0)  # fixes the random fold split
+    np.random.seed(d["seed"])
 
     data_path = Path(d["data_path"]) / f"Rat{d['rat']}" / "Open1"
     save_path = Path(d["save_path"]) / f"Rat{d['rat']}"
@@ -280,6 +282,8 @@ def get_fold_ratemaps(args: Optional[argparse.Namespace] = None, /, **overrides:
             "filter_vel": d["filter_vel"],
             "n_loc_bins": d["n_loc_bins"],
             "n_hd_bins": d["n_hd_bins"],
+            "floor": d["floor"],
+            "seed": d["seed"],
         }, f, indent=2)
 
     elapsed_min = (time.time() - t0) / 60.0

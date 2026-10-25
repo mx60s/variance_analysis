@@ -334,6 +334,8 @@ def get_ratemaps(args: Optional[argparse.Namespace] = None, /, **overrides: Any)
     d.setdefault("save_intermediates", False)
     d.setdefault("md_roll", 3)
     d.setdefault("floor", 5)
+    d.setdefault("seed", 0)  # fixes the random fold split
+    np.random.seed(d["seed"])
 
     if d["dataset"] is None or d["rat"] is None:
         raise ValueError("Both 'dataset' (int) and 'rat' (str) must be provided.")
@@ -407,6 +409,8 @@ def get_ratemaps(args: Optional[argparse.Namespace] = None, /, **overrides: Any)
             "n_md_bins": d["n_md_bins"],
             "n_loc_bins": d["n_loc_bins"],
             "md_smooth_window": d["md_smooth_window"],
+            "floor": d["floor"],
+            "seed": d["seed"],
         }, f, indent=2)
     print("Saved meta json.")
 
