@@ -6,54 +6,22 @@ import json
 import os
 from pathlib import Path
 import time
-from typing import List, Tuple, Optional, Dict, Any
-from math import ceil
+from typing import Tuple, Optional, Dict, Any
 
 import numpy as np
 from tqdm import tqdm
-from scipy.io import loadmat
-from scipy.ndimage import gaussian_filter1d, gaussian_filter
+from scipy.ndimage import gaussian_filter
+
+from src.rodent_data import load_pfeiffer_data, build_spike_rates, compute_velocity, compute_velocity_series
+from src.decoding import (
+    make_cv_masks, test_spike_counts, gaussian_filter_hd,
+    hd_bayesian_decoding, xy_bayesian_decoding, hd_chance_decoding, xy_chance_decoding,
+    compute_chance_error_analytical_hd, compute_chance_error_analytical_xy,
+    compute_no_prior_chance_hd, compute_no_prior_chance_xy,
+    evaluate_errors_hd, evaluate_errors_xy,
+)
 
 # utilities
-
-def compute_velocity(locations: np.ndarray, base_time: np.ndarray) -> np.ndarray:
-    time_step = float(locations[3, 0] - locations[2, 0])
-    steps = np.diff(locations[:, 1:3], axis=0)
-    steps = np.vstack((steps, steps[-1]))
-    speed_samples = np.linalg.norm(steps, axis=1) / max(time_step, 1e-9)
-
-    v = np.zeros(len(base_time) - 1, dtype=float)
-    for t in range(len(base_time) - 1):
-        idx = np.where((locations[:, 0] >= base_time[t]) & (locations[:, 0] < base_time[t + 1]))[0]
-        v[t] = 0.0 if idx.size == 0 else float(np.mean(speed_samples[idx]))
-    return v
-
-
-def compute_velocity_series(locations: np.ndarray) -> np.ndarray:
-    time_step = float(locations[3, 0] - locations[2, 0])
-    steps = np.diff(locations[:, 1:3], axis=0)
-    steps = np.vstack((steps, steps[-1]))
-    speed_samples = np.linalg.norm(steps, axis=1) / max(time_step, 1e-9)
-    
-    return np.column_stack((locations[:, 0], speed_samples))
-
-
-def gaussian_filter_hd(rate_curve: np.ndarray, smooth_sigma: float) -> np.ndarray:
-    if smooth_sigma is None or smooth_sigma <= 0:
-        return rate_curve
-    V = rate_curve.copy()
-    isnan = np.isnan(V)
-    V[isnan] = 0.0
-    U = np.ones_like(rate_curve, dtype=float)
-    U[isnan] = 0.0
-    VV = gaussian_filter1d(V, sigma=smooth_sigma, axis=0, mode="wrap")
-    UU = gaussian_filter1d(U, sigma=smooth_sigma, axis=0, mode="wrap")
-    with np.errstate(invalid='ignore', divide='ignore'):
-        out = VV / UU
-    out[UU <= 0] = np.nan
-    
-    return out
-
 
 def gaussian_filter_xy(rate_map: np.ndarray, smooth_sigma_xy: Tuple[float, float]) -> np.ndarray:
     sy, sx = smooth_sigma_xy
@@ -79,6 +47,23 @@ def gaussian_filter_xy(rate_map: np.ndarray, smooth_sigma_xy: Tuple[float, float
     return out
 
 
+def _nearest_fast_bins(
+    loc_times: np.ndarray,
+    base_time: np.ndarray,
+    fast_bins: Optional[np.ndarray],
+    timebin_tol: float = 1e-4,
+) -> np.ndarray:
+    """Nearest time-bin edge for each sample, kept only if that edge is a high-velocity bin."""
+    loc_idx = np.array([int(np.abs(base_time - t).argmin()) for t in loc_times], dtype=int)
+
+    if fast_bins is not None and fast_bins.size:
+        mask = np.any(np.isclose(base_time[loc_idx, None], fast_bins, atol=timebin_tol), axis=1)
+        loc_idx = loc_idx[mask]
+
+    T = len(base_time) - 1
+    return loc_idx[(loc_idx >= 0) & (loc_idx < T)]
+
+
 def select_time_indices_in_hd_bin(
     locations: np.ndarray,
     base_time: np.ndarray,
@@ -93,16 +78,7 @@ def select_time_indices_in_hd_bin(
     in_hd = np.where((locations[:, 3] >= l0) & (locations[:, 3] < l1))[0]
     if in_hd.size == 0:
         return np.array([], dtype=int)
-
-    loc_times = locations[in_hd, 0]
-    loc_idx = np.array([int(np.abs(base_time - t).argmin()) for t in loc_times], dtype=int)
-
-    if fast_bins is not None and fast_bins.size:
-        mask = np.any(np.isclose(base_time[loc_idx, None], fast_bins, atol=timebin_tol), axis=1)
-        loc_idx = loc_idx[mask]
-
-    T = len(base_time) - 1
-    return loc_idx[(loc_idx >= 0) & (loc_idx < T)]
+    return _nearest_fast_bins(locations[in_hd, 0], base_time, fast_bins, timebin_tol)
 
 
 def select_time_indices_in_xy_bin(
@@ -122,17 +98,17 @@ def select_time_indices_in_xy_bin(
     )[0]
     if in_xy.size == 0:
         return np.array([], dtype=int)
+    return _nearest_fast_bins(locations[in_xy, 0], base_time, fast_bins, timebin_tol)
 
-    loc_times = locations[in_xy, 0]
-    loc_idx = np.array([int(np.abs(base_time - t).argmin()) for t in loc_times], dtype=int)
 
-    if fast_bins is not None and fast_bins.size:
-        mask = np.any(np.isclose(base_time[loc_idx, None], fast_bins, atol=timebin_tol), axis=1)
-        loc_idx = loc_idx[mask]
+def _fast_bins(locations: np.ndarray, base_time: np.ndarray, velocity_threshold: float) -> Optional[np.ndarray]:
+    v = compute_velocity(locations, base_time)
+    fast_idx = np.where(v >= velocity_threshold)[0]
+    print(
+        f"Filtering {100.0 - (len(fast_idx) / max(len(base_time)-1,1)) * 100.0:.1f}% of bins due to low velocity"
+    )
+    return base_time[fast_idx] if velocity_threshold > 0.0 else None
 
-    T = len(base_time) - 1
-    return loc_idx[(loc_idx >= 0) & (loc_idx < T)]
-    
 
 def get_hd_rate_maps_cv(
     spike_rates: np.ndarray,
@@ -141,28 +117,13 @@ def get_hd_rate_maps_cv(
     n_hd_bins: int = 60,
     velocity_threshold: float = 5.0,
     cv_count: int = 4,
-    seed: int = 777,
 ):
-    rng = np.random.RandomState(seed)
-
-    v = compute_velocity(locations, base_time)
-    fast_idx = np.where(v >= velocity_threshold)[0]
-    fast_bins = base_time[fast_idx] if velocity_threshold > 0.0 else None
-    print(
-        f"Filtering {100.0 - (len(fast_idx) / max(len(base_time)-1,1)) * 100.0:.1f}% of bins due to low velocity"
-    )
+    fast_bins = _fast_bins(locations, base_time, velocity_threshold)
 
     hd_edges = np.linspace(0.0, 360.0 + 1e-2, n_hd_bins + 1)
 
     T, N = spike_rates.shape
-
-    n_points = T
-    folds = np.array_split(np.arange(n_points), cv_count)
-    cv_masks: List[np.ndarray] = []
-    for cv in range(cv_count):
-        mask = np.ones(n_points, dtype=bool)
-        mask[folds[cv]] = False
-        cv_masks.append(mask)
+    cv_masks = make_cv_masks(T, cv_count)
 
     shape_map = (n_hd_bins, N)
     cv_rate_maps = [np.full(shape_map, np.nan) for _ in range(cv_count)]
@@ -176,6 +137,7 @@ def get_hd_rate_maps_cv(
             continue
 
         for cv in range(cv_count):
+            # occupancy counts all (train and test) samples in the bin
             occupancy_maps[cv][l] = float(idx.size)
             
             mask_cv = cv_masks[cv]
@@ -199,16 +161,8 @@ def get_xy_rate_maps_cv(
     n_xy_bins: int = 100,
     velocity_threshold: float = 5.0,
     cv_count: int = 4,
-    seed: int = 777,
 ):
-    rng = np.random.RandomState(seed)
-
-    v = compute_velocity(locations, base_time)
-    fast_idx = np.where(v >= velocity_threshold)[0]
-    fast_bins = base_time[fast_idx] if velocity_threshold > 0 else None
-    print(
-        f"Filtering {100.0 - (len(fast_idx) / max(len(base_time)-1,1)) * 100.0:.1f}% of bins due to low velocity"
-    )
+    fast_bins = _fast_bins(locations, base_time, velocity_threshold)
 
     xmin, xmax = 0., 201.
     ymin, ymax = 0., 201.
@@ -220,13 +174,7 @@ def get_xy_rate_maps_cv(
     y_edges = np.linspace(ymin, ymax + 1e-6, n_y_bins + 1)
 
     T, N = spike_rates.shape
-    n_points = T
-    folds = np.array_split(np.arange(n_points), cv_count)
-    cv_masks: List[np.ndarray] = []
-    for cv in range(cv_count):
-        mask = np.ones(n_points, dtype=bool)
-        mask[folds[cv]] = False
-        cv_masks.append(mask)
+    cv_masks = make_cv_masks(T, cv_count)
 
     shape_map = (n_y_bins, n_x_bins, N)
     cv_rate_maps = [np.full(shape_map, np.nan) for _ in range(cv_count)]
@@ -256,512 +204,6 @@ def get_xy_rate_maps_cv(
         cv_masks,
         (x_edges, y_edges),
     )
-
-# decoding
-
-def hd_bayesian_decoding(
-    rate_map_hd: np.ndarray,
-    spike_counts: np.ndarray,
-    tau: float,
-    hd_bins: np.ndarray,
-    avg_vel: np.ndarray,
-    vel_threshold: float = 0.0,
-    eps: float = 1e-10,
-):
-    T = spike_counts.shape[0]
-    H, N = rate_map_hd.shape
-
-    decoded_hd = np.full(T, np.nan)
-    posterior_all: List[np.ndarray] = []
-
-    rate_tau = rate_map_hd * tau
-    valid_h = np.any(np.isfinite(rate_tau), axis=1)
-    rate_tau = np.nan_to_num(rate_tau, nan=0.0)
-
-    for t in range(T):
-        if np.isnan(avg_vel[t]) or avg_vel[t] < vel_threshold:
-            posterior_all.append(np.full((H,), np.nan))
-            continue
-
-        k = spike_counts[t][None, :] 
-        with np.errstate(divide='ignore', invalid='ignore'):
-            log_like = np.nansum(k * np.log(rate_tau + eps) - rate_tau, axis=1) 
-        log_like[~valid_h] = -np.inf
-
-        if not np.any(np.isfinite(log_like)):
-            posterior_all.append(np.full((H,), np.nan))
-            continue
-
-        m = np.nanmax(log_like)
-        post = np.exp(log_like - m)
-        post_sum = np.nansum(post)
-        if post_sum <= 0 or not np.isfinite(post_sum):
-            posterior_all.append(np.full((H,), np.nan))
-            continue
-        post /= post_sum
-        posterior_all.append(post)
-
-        h_idx = int(np.nanargmax(post))
-        decoded_hd[t] = 0.5 * (hd_bins[h_idx] + hd_bins[h_idx + 1])
-
-    return decoded_hd, posterior_all
-
-
-def xy_bayesian_decoding(
-    rate_map_xy: np.ndarray,   
-    spike_counts: np.ndarray,  
-    tau: float,
-    avg_vel: np.ndarray,       
-    x_edges: np.ndarray,
-    y_edges: np.ndarray,
-    vel_threshold: float = 0.0,
-    eps: float = 1e-10,
-):
-    T, N = spike_counts.shape
-    Y, X, N_map = rate_map_xy.shape
-
-    decoded_xy = np.full((T, 2), np.nan)
-    posterior_all: List[np.ndarray] = []
-
-    rate_tau = rate_map_xy * tau  
-    rate_tau_flat = np.nan_to_num(rate_tau.reshape(Y * X, N), nan=0.0)
-
-    for t in range(T):
-        if np.isnan(avg_vel[t]) or avg_vel[t] < vel_threshold:
-            posterior_all.append(np.full((Y, X), np.nan))
-            continue
-
-        k = spike_counts[t] 
-
-        with np.errstate(divide='ignore', invalid='ignore'):
-            log_like = np.nansum(k[None, :] * np.log(rate_tau_flat + eps) - rate_tau_flat, axis=1)
-
-        if np.all(~np.isfinite(log_like)):
-            posterior_all.append(np.full((Y, X), np.nan))
-            continue
-
-        m = np.nanmax(log_like)
-        post = np.exp(log_like - m)
-        s = np.nansum(post)
-        if s <= 0 or not np.isfinite(s):
-            posterior_all.append(np.full((Y, X), np.nan))
-            continue
-        post = (post / s).reshape(Y, X)
-        posterior_all.append(post)
-
-        max_idx_flat = int(np.nanargmax(post))
-        iy, ix = divmod(max_idx_flat, X)
-
-        x_c = 0.5 * (x_edges[ix] + x_edges[ix + 1])
-        y_c = 0.5 * (y_edges[iy] + y_edges[iy + 1])
-        decoded_xy[t, 0] = x_c
-        decoded_xy[t, 1] = y_c
-
-    return decoded_xy, posterior_all
-
-
-# ==================== CHANCE-LEVEL DECODING ====================
-# These functions decode based purely on occupancy (the prior), ignoring neural activity.
-# This provides a baseline: "how well would we do just guessing based on where the animal spends time?"
-
-
-def angular_distance_deg(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Signed angular distance in degrees, wrapped to [-180, 180]."""
-    d = (a - b + 180.0) % 360.0 - 180.0
-    return d
-
-
-def hd_chance_decoding(
-    occupancy: np.ndarray,
-    n_test_bins: int,
-    hd_edges: np.ndarray,
-    avg_vel: np.ndarray,
-    vel_threshold: float = 0.0,
-    mode: str = "mode",
-    rng: Optional[np.random.Generator] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Chance-level decoding for HD based on occupancy distribution.
-    
-    Parameters
-    ----------
-    occupancy : np.ndarray
-        Occupancy counts per HD bin (from training data).
-    n_test_bins : int
-        Number of test time bins to decode.
-    hd_edges : np.ndarray
-        Bin edges for HD.
-    avg_vel : np.ndarray
-        Average velocity per test bin.
-    vel_threshold : float
-        Velocity threshold for valid bins.
-    mode : str
-        'mode' - always predict most occupied bin (deterministic baseline)
-        'sample' - sample from occupancy distribution (stochastic baseline)
-    rng : np.random.Generator, optional
-        Random generator for 'sample' mode.
-        
-    Returns
-    -------
-    decoded_hd : np.ndarray
-        Chance-decoded HD values.
-    occupancy_prior : np.ndarray
-        Normalized occupancy distribution used as prior.
-    """
-    # Normalize occupancy to get prior P(HD)
-    occ = occupancy.copy()
-    occ[~np.isfinite(occ)] = 0.0
-    total_occ = occ.sum()
-    if total_occ > 0:
-        prior = occ / total_occ
-    else:
-        prior = np.ones_like(occ) / len(occ)  # uniform if no occupancy
-    
-    decoded_hd = np.full(n_test_bins, np.nan)
-    
-    if mode == "mode":
-        # Always predict the most occupied bin
-        mode_idx = int(np.argmax(prior))
-        mode_hd = 0.5 * (hd_edges[mode_idx] + hd_edges[mode_idx + 1])
-        for t in range(n_test_bins):
-            if np.isnan(avg_vel[t]) or avg_vel[t] < vel_threshold:
-                continue
-            decoded_hd[t] = mode_hd
-    elif mode == "sample":
-        # Sample from occupancy distribution
-        if rng is None:
-            rng = np.random.default_rng()
-        bin_centers = 0.5 * (hd_edges[:-1] + hd_edges[1:])
-        for t in range(n_test_bins):
-            if np.isnan(avg_vel[t]) or avg_vel[t] < vel_threshold:
-                continue
-            idx = rng.choice(len(prior), p=prior)
-            decoded_hd[t] = bin_centers[idx]
-    else:
-        raise ValueError(f"Unknown mode: {mode}. Use 'mode' or 'sample'.")
-    
-    return decoded_hd, prior
-
-
-def xy_chance_decoding(
-    occupancy: np.ndarray,
-    n_test_bins: int,
-    x_edges: np.ndarray,
-    y_edges: np.ndarray,
-    avg_vel: np.ndarray,
-    vel_threshold: float = 0.0,
-    mode: str = "mode",
-    rng: Optional[np.random.Generator] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Chance-level decoding for XY based on occupancy distribution.
-    
-    Parameters
-    ----------
-    occupancy : np.ndarray
-        Occupancy counts per XY bin (shape: n_y_bins x n_x_bins, from training data).
-    n_test_bins : int
-        Number of test time bins to decode.
-    x_edges, y_edges : np.ndarray
-        Bin edges for X and Y.
-    avg_vel : np.ndarray
-        Average velocity per test bin.
-    vel_threshold : float
-        Velocity threshold for valid bins.
-    mode : str
-        'mode' - always predict most occupied bin (deterministic baseline)
-        'sample' - sample from occupancy distribution (stochastic baseline)
-    rng : np.random.Generator, optional
-        Random generator for 'sample' mode.
-        
-    Returns
-    -------
-    decoded_xy : np.ndarray
-        Chance-decoded XY values (shape: n_test_bins x 2).
-    occupancy_prior : np.ndarray
-        Normalized occupancy distribution used as prior.
-    """
-    Y, X = occupancy.shape
-    occ = occupancy.copy()
-    occ[~np.isfinite(occ)] = 0.0
-    total_occ = occ.sum()
-    if total_occ > 0:
-        prior = occ / total_occ
-    else:
-        prior = np.ones_like(occ) / occ.size
-    
-    decoded_xy = np.full((n_test_bins, 2), np.nan)
-    
-    x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
-    y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
-    
-    if mode == "mode":
-        mode_idx_flat = int(np.argmax(prior))
-        iy, ix = divmod(mode_idx_flat, X)
-        mode_x = x_centers[ix]
-        mode_y = y_centers[iy]
-        for t in range(n_test_bins):
-            if np.isnan(avg_vel[t]) or avg_vel[t] < vel_threshold:
-                continue
-            decoded_xy[t, 0] = mode_x
-            decoded_xy[t, 1] = mode_y
-    elif mode == "sample":
-        if rng is None:
-            rng = np.random.default_rng()
-        prior_flat = prior.ravel()
-        for t in range(n_test_bins):
-            if np.isnan(avg_vel[t]) or avg_vel[t] < vel_threshold:
-                continue
-            idx = rng.choice(len(prior_flat), p=prior_flat)
-            iy, ix = divmod(idx, X)
-            decoded_xy[t, 0] = x_centers[ix]
-            decoded_xy[t, 1] = y_centers[iy]
-    else:
-        raise ValueError(f"Unknown mode: {mode}. Use 'mode' or 'sample'.")
-    
-    return decoded_xy, prior
-
-
-def compute_chance_error_analytical_hd(
-    occupancy: np.ndarray,
-    hd_edges: np.ndarray,
-) -> Dict[str, float]:
-    """
-    Compute expected error analytically for HD chance decoding.
-    
-    This computes E[|error|] = sum_i P(true=i) * |angle_diff(i, mode)|
-    For mode decoding: always guess the most occupied bin.
-    
-    Returns expected mean absolute error under chance model.
-    """
-    occ = occupancy.copy()
-    occ[~np.isfinite(occ)] = 0.0
-    total = occ.sum()
-    if total <= 0:
-        return {'expected_mae_deg': np.nan, 'mode_bin_probability': np.nan}
-    
-    prior = occ / total
-    n_bins = len(prior)
-    bin_centers = 0.5 * (hd_edges[:-1] + hd_edges[1:])
-    
-    # Mode prediction
-    mode_idx = int(np.argmax(prior))
-    mode_angle = bin_centers[mode_idx]
-    
-    # Expected error: sum over true positions weighted by their probability
-    expected_error = 0.0
-    for i in range(n_bins):
-        err = np.abs(angular_distance_deg(np.array([bin_centers[i]]), np.array([mode_angle]))[0])
-        expected_error += prior[i] * err
-    
-    return {
-        'expected_mae_deg': float(expected_error),
-        'mode_bin_probability': float(prior[mode_idx]),
-        'mode_bin_center_deg': float(mode_angle),
-    }
-
-
-def compute_chance_error_analytical_xy(
-    occupancy: np.ndarray,
-    x_edges: np.ndarray,
-    y_edges: np.ndarray,
-) -> Dict[str, float]:
-    """
-    Compute expected error analytically for XY chance decoding.
-    
-    Returns expected mean absolute error (Euclidean distance) under chance model.
-    """
-    Y, X = occupancy.shape
-    occ = occupancy.copy()
-    occ[~np.isfinite(occ)] = 0.0
-    total = occ.sum()
-    if total <= 0:
-        return {'expected_mae_cm': np.nan, 'mode_bin_probability': np.nan}
-    
-    prior = occ / total
-    x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
-    y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
-    
-    mode_idx_flat = int(np.argmax(prior))
-    iy_mode, ix_mode = divmod(mode_idx_flat, X)
-    mode_x = x_centers[ix_mode]
-    mode_y = y_centers[iy_mode]
-    
-    expected_error = 0.0
-    for iy in range(Y):
-        for ix in range(X):
-            dist = np.sqrt((x_centers[ix] - mode_x)**2 + (y_centers[iy] - mode_y)**2)
-            expected_error += prior[iy, ix] * dist
-    
-    return {
-        'expected_mae_cm': float(expected_error),
-        'mode_bin_probability': float(prior[iy_mode, ix_mode]),
-        'mode_x': float(mode_x),
-        'mode_y': float(mode_y),
-    }
-
-
-def compute_no_prior_chance_hd() -> Dict[str, float]:
-    """
-    Compute expected error for HD decoding with no prior (uniform random guessing).
-
-    If we guess uniformly at random from [0, 360), the expected absolute
-    circular error is exactly 90 degrees.
-
-    Derivation: The absolute circular error is uniformly distributed on [0, 180],
-    so E[|error|] = 90.
-    """
-    return {
-        'no_prior_expected_mae_deg': 90.0,
-        'description': 'Uniform random guessing over [0, 360) degrees'
-    }
-
-
-def compute_no_prior_chance_xy(
-    x_edges: np.ndarray,
-    y_edges: np.ndarray,
-) -> Dict[str, float]:
-    """
-    Compute expected error for XY decoding with no prior (uniform random guessing).
-
-    For a square environment of side L, the expected Euclidean distance between
-    two uniformly random points is approximately 0.5214 * L.
-
-    Exact formula: L * (2 + sqrt(2) + 5*log(1+sqrt(2))) / 15
-    """
-    import math
-
-    L_x = x_edges[-1] - x_edges[0]
-    L_y = y_edges[-1] - y_edges[0]
-
-    # For a square, use the exact formula
-    # For a rectangle, use average of the two dimensions as approximation
-    L = (L_x + L_y) / 2.0
-
-    # Exact coefficient for square: (2 + sqrt(2) + 5*ln(1+sqrt(2))) / 15 ≈ 0.5214
-    sqrt2 = math.sqrt(2)
-    coeff = (2 + sqrt2 + 5 * math.log(1 + sqrt2)) / 15
-
-    expected_error = coeff * L
-
-    return {
-        'no_prior_expected_mae_cm': float(expected_error),
-        'environment_size_x_cm': float(L_x),
-        'environment_size_y_cm': float(L_y),
-        'description': 'Uniform random guessing over environment'
-    }
-
-
-# error analysis helpers
-
-def unwrap_deg(angle_deg: np.ndarray) -> np.ndarray:
-    rad = np.deg2rad(angle_deg)
-    rad_unwrapped = np.unwrap(rad, discont=np.pi)
-    return np.rad2deg(rad_unwrapped)
-
-
-def interp_circular_deg(t_src: np.ndarray, t_tgt: np.ndarray, angles_deg: np.ndarray) -> np.ndarray:
-    order = np.argsort(t_src)
-    t_src = t_src[order]
-    angles_deg = angles_deg[order]
-    ang_unwrapped = unwrap_deg(angles_deg)
-    ang_interp_unwrapped = np.interp(t_tgt, t_src, ang_unwrapped)
-    ang_interp = np.mod(ang_interp_unwrapped, 360.0)
-    return ang_interp
-
-
-def compute_ground_truth_hd(positions: np.ndarray, time_centers: np.ndarray, velocity_series: np.ndarray, velocity_filter: float, window: float = 0.06) -> np.ndarray:
-    timestamps = positions[:, 0]
-    hd = positions[:, 3]  # degrees
-    hd_interp = interp_circular_deg(timestamps, time_centers, hd)
-
-    v_times = velocity_series[:, 0]
-    v_vals = velocity_series[:, 1]
-
-    velocity_interp = np.full(len(time_centers), np.nan)
-    for i, tc in enumerate(time_centers):
-        mask = (v_times >= tc - window) & (v_times <= tc + window)
-        if np.any(mask):
-            velocity_interp[i] = float(np.nanmean(v_vals[mask]))
-
-    valid_velocity = (velocity_interp >= velocity_filter) & (~np.isnan(velocity_interp))
-    ground_hd_filtered = np.where(valid_velocity, hd_interp, np.nan)
-    return ground_hd_filtered
-
-
-def evaluate_errors_hd(decoded_hd: np.ndarray, time_centers: np.ndarray, positions: np.ndarray, velocity_series: np.ndarray, vel_threshold: float) -> Dict[str, Any]:
-    gt = compute_ground_truth_hd(positions, time_centers, velocity_series, vel_threshold)
-    err = (decoded_hd - gt + 180.0) % 360.0 - 180.0
-    hd_err_abs = np.abs(err)
-    total = int(hd_err_abs.size)
-    valid_mask = ~np.isnan(hd_err_abs)
-    valid = int(np.sum(valid_mask))
-    stats = {
-        'hd_mean_abs_error_deg': float(np.nanmean(hd_err_abs)),
-        'hd_median_abs_error_deg': float(np.nanmedian(hd_err_abs)),
-        'hd_std_abs_error_deg': float(np.nanstd(hd_err_abs)),
-        'total_samples': total,
-        'valid_samples': valid,
-        'success_rate_pct': float(100.0 * valid / max(total, 1)),
-    }
-    return {'stats': stats, 'errors_deg': err}
-
-
-def interp_linear_series(t_src: np.ndarray, t_tgt: np.ndarray, v_src: np.ndarray) -> np.ndarray:
-    order = np.argsort(t_src)
-    return np.interp(t_tgt, t_src[order], v_src[order])
-
-
-def compute_ground_truth_xy(positions: np.ndarray, time_centers: np.ndarray, velocity_series: np.ndarray, velocity_filter: float, window: float = 0.06) -> np.ndarray:
-    t = positions[:, 0]
-    x = positions[:, 1]
-    y = positions[:, 2]
-    order = np.argsort(t)
-    x_interp = np.interp(time_centers, t[order], x[order])
-    y_interp = np.interp(time_centers, t[order], y[order])
-
-    v_times = velocity_series[:, 0]
-    v_vals = velocity_series[:, 1]
-    velocity_interp = np.full(len(time_centers), np.nan)
-    for i, tc in enumerate(time_centers):
-        mask = (v_times >= tc - window) & (v_times <= tc + window)
-        if np.any(mask):
-            velocity_interp[i] = float(np.nanmean(v_vals[mask]))
-
-    valid = (velocity_interp >= velocity_filter) & (~np.isnan(velocity_interp))
-    gt_xy = np.column_stack([x_interp, y_interp])
-    gt_xy[~valid, :] = np.nan
-    return gt_xy
-
-
-def evaluate_errors_xy(decoded_xy: np.ndarray, time_centers: np.ndarray, positions: np.ndarray, velocity_series: np.ndarray, vel_threshold: float) -> Dict[str, Any]:
-    gt_xy = compute_ground_truth_xy(positions, time_centers, velocity_series, vel_threshold)
-    diffs = decoded_xy - gt_xy  # (T,2)
-    dists = np.sqrt(np.nansum(diffs**2, axis=1)) 
-    total = int(dists.size)
-    valid_mask = ~np.isnan(dists)
-    valid = int(np.sum(valid_mask))
-    stats = {
-        'xy_mean_abs_error_cm': float(np.nanmean(dists)),
-        'xy_median_abs_error_cm': float(np.nanmedian(dists)),
-        'xy_std_abs_error_cm': float(np.nanstd(dists)),
-        'total_samples': total,
-        'valid_samples': valid,
-        'success_rate_pct': float(100.0 * valid / max(total, 1)),
-    }
-    return {'stats': stats, 'errors_cm': dists}
-    
-
-def build_spike_rates(spike_times: np.ndarray, base_time: np.ndarray, tau: float, excit_list: np.ndarray) -> np.ndarray:
-    T = len(base_time) - 1
-    N = len(excit_list)
-    rates = np.zeros((T, N), dtype=float)
-    for n_idx, neuron_id in enumerate(excit_list):
-        neuron_spk = spike_times[spike_times[:, 1] == neuron_id, 0]
-        if neuron_spk.size:
-            counts, _ = np.histogram(neuron_spk, bins=base_time)
-            rates[:, n_idx] = counts.astype(float) / max(tau, 1e-9)
-    return rates
     
 
 def decode_solo(
@@ -824,13 +266,7 @@ def decode_solo(
     rng = np.random.default_rng(seed)
 
     print("\nLoading data…")
-    locations = loadmat(str(data_path / 'Position_Data.mat'))['Position_Data']
-    spike_data = loadmat(str(data_path / 'Spike_Data.mat'))
-    spike_times_raw = spike_data['Spike_Data']  # columns: [time, neuron_id]
-
-    excit = spike_data['Excitatory_Neurons']
-    excit_list = np.asarray(excit).ravel().astype(spike_data['Spike_Data'].dtype)
-    
+    locations, spike_times_raw, excit_list = load_pfeiffer_data(data_path)
     print(
         f"Spikes: {len(spike_times_raw)} | Excitatory neurons: {len(excit_list)} | Position samples: {locations.shape[0]}"
     )
@@ -852,17 +288,15 @@ def decode_solo(
         n_hd_bins=n_hd_bins,
         velocity_threshold=vel_threshold,
         cv_count=cv_folds,
-        seed=seed,
     )
 
-    (cv_rate_maps_xy, occ_maps_xy, cv_masks_xy, (x_edges, y_edges)) = get_xy_rate_maps_cv(
+    (cv_rate_maps_xy, occ_maps_xy, _, (x_edges, y_edges)) = get_xy_rate_maps_cv(
         spike_rates=spike_rates,
         locations=locations,
         base_time=base_time,
         n_xy_bins=n_xy_bins,
         velocity_threshold=vel_threshold,
         cv_count=cv_folds,
-        seed=seed,
     )
 
     cv_summary: Dict[str, Any] = {"folds": [], "n_folds": int(cv_folds)}
@@ -876,10 +310,7 @@ def decode_solo(
         mask_hd = cv_masks[cv_idx]  # True=train, False=test
         test_idx = np.where(~mask_hd)[0]
 
-        sc = (spike_rates[test_idx, :] * tau).astype(float)
-        if smooth_spikes_sigma_s and smooth_spikes_sigma_s > 0:
-            sigma_bins_t = max(1e-9, smooth_spikes_sigma_s / tau)
-            sc = gaussian_filter1d(sc, sigma=sigma_bins_t, axis=0, mode="nearest")
+        sc = test_spike_counts(spike_rates, test_idx, tau, smooth_spikes_sigma_s)
         avg_vel = avg_vel_bins[test_idx]
         tc = time_centers_all[test_idx]
 
@@ -927,26 +358,17 @@ def decode_solo(
             with open(save_path / f"chance_analytical_hd_cv{cv_idx}_{n_hd_bins}.json", "w") as f:
                 json.dump(analytical_hd, f, indent=2)
 
-        # XY
+        # XY (same folds as HD)
         rate_map_xy = cv_rate_maps_xy[cv_idx]
         occ_xy = occ_maps_xy[cv_idx]
         if smooth_sigma_xy and smooth_sigma_xy > 0:
             rate_map_xy = gaussian_filter_xy(rate_map_xy, (smooth_sigma_xy, smooth_sigma_xy))
-        mask_xy = cv_masks_xy[cv_idx]
-        test_idx_xy = np.where(~mask_xy)[0]
-        avg_vel_xy = avg_vel_bins[test_idx_xy]
-        tc_xy = time_centers_all[test_idx_xy]
-
-        sc_xy = (spike_rates[test_idx_xy, :] * tau).astype(float)
-        if smooth_spikes_sigma_s and smooth_spikes_sigma_s > 0:
-            sigma_bins_t = max(1e-9, smooth_spikes_sigma_s / tau)
-            sc_xy = gaussian_filter1d(sc_xy, sigma=sigma_bins_t, axis=0, mode="nearest")
 
         decoded_xy, post_xy = xy_bayesian_decoding(
             rate_map_xy=rate_map_xy,
-            spike_counts=sc_xy,
+            spike_counts=sc,
             tau=tau,
-            avg_vel=avg_vel_xy,
+            avg_vel=avg_vel,
             x_edges=x_edges,
             y_edges=y_edges,
             vel_threshold=vel_threshold,
@@ -958,12 +380,12 @@ def decode_solo(
         base_xy = f"decoded_xy_cv{cv_idx}_{n_y_bins}x{n_x_bins}"
         np.save(save_path / f"{base_xy}.npy", decoded_xy)
         np.save(save_path / f"{base_xy}_posterior.npy", np.array(post_xy, dtype=object))
-        np.save(save_path / f"{base_xy}_time_centers.npy", tc_xy)
+        np.save(save_path / f"{base_xy}_time_centers.npy", tc)
         if save_intermediates:
             np.save(save_path / f"xy_rate_map_cv{cv_idx}_{n_y_bins}x{n_x_bins}.npy", rate_map_xy)
             np.save(save_path / f"xy_occupancy_map_cv{cv_idx}_{n_y_bins}x{n_x_bins}.npy", occ_xy)
 
-        eval_xy = evaluate_errors_xy(decoded_xy, tc_xy, locations, velocity_series, vel_threshold)
+        eval_xy = evaluate_errors_xy(decoded_xy, tc, locations, velocity_series, vel_threshold)
         np.savez_compressed(save_path / f"errors_xy_cv{cv_idx}_{n_y_bins}x{n_x_bins}.npz", **eval_xy)
 
         # XY Chance decoding
@@ -972,10 +394,10 @@ def decode_solo(
             print(f"  -> XY chance decoding (mode='{chance_mode}')")
             decoded_xy_chance, xy_prior = xy_chance_decoding(
                 occupancy=occ_xy,
-                n_test_bins=len(test_idx_xy),
+                n_test_bins=len(test_idx),
                 x_edges=x_edges,
                 y_edges=y_edges,
-                avg_vel=avg_vel_xy,
+                avg_vel=avg_vel,
                 vel_threshold=vel_threshold,
                 mode=chance_mode,
                 rng=rng,
@@ -983,7 +405,7 @@ def decode_solo(
             np.save(save_path / f"decoded_xy_chance_cv{cv_idx}_{n_y_bins}x{n_x_bins}.npy", decoded_xy_chance)
             np.save(save_path / f"xy_occupancy_prior_cv{cv_idx}_{n_y_bins}x{n_x_bins}.npy", xy_prior)
             
-            eval_xy_chance = evaluate_errors_xy(decoded_xy_chance, tc_xy, locations, velocity_series, vel_threshold)
+            eval_xy_chance = evaluate_errors_xy(decoded_xy_chance, tc, locations, velocity_series, vel_threshold)
             np.savez_compressed(save_path / f"errors_xy_chance_cv{cv_idx}_{n_y_bins}x{n_x_bins}.npz", **eval_xy_chance)
             
             analytical_xy = compute_chance_error_analytical_xy(occ_xy, x_edges, y_edges)

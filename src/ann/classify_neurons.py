@@ -1,14 +1,10 @@
-from pathlib import Path
 import os
 from tqdm.auto import tqdm
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
 
-import logging
-import cv2
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
 
 from .score_utils import *
 
@@ -64,10 +60,6 @@ def classify_neurons(neuron_chart_info):
 
             if not (is_place_cell or is_direction_cell or is_border_cell):
                 active_no_type_indices.append(neuron_index)
-
-    # plot
-    n_dead_neurons = len(dead_neurons_indices)
-    n_active_neurons = neuron_chart_info.shape[0] - n_dead_neurons
 
     # Collect the indices of neurons that are all three types
     # (place + border + direction)

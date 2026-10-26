@@ -6,218 +6,14 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any
 
 import numpy as np
-import pandas as pd
-from scipy.io import loadmat
-from scipy.ndimage import gaussian_filter1d, gaussian_filter
 
-# utilities
-
-def compute_velocity(locations: np.ndarray, base_time: np.ndarray) -> np.ndarray:
-    if locations.shape[0] < 4:
-        raise ValueError("locations must have >= 4 rows to estimate time step.")
-    time_step = float(locations[3, 0] - locations[2, 0])
-    steps = np.diff(locations[:, 1:3], axis=0)
-    steps = np.vstack((steps, steps[-1]))
-    speed_samples = np.linalg.norm(steps, axis=1) / max(time_step, 1e-9)
-    v = np.zeros(len(base_time) - 1, dtype=float)
-    for t in range(len(base_time) - 1):
-        idx = np.where((locations[:, 0] >= base_time[t]) & (locations[:, 0] < base_time[t + 1]))[0]
-        v[t] = 0.0 if idx.size == 0 else float(np.mean(speed_samples[idx]))
-    return v
-
-
-def compute_avg_velocity_per_bin(base_time: np.ndarray,
-                                 velocity_series: Optional[np.ndarray],
-                                 positions: np.ndarray) -> np.ndarray:
-    T = len(base_time) - 1
-    avg_vel = np.full(T, np.nan, dtype=float)
-    v_t = velocity_series[:, 0]
-    v_v = velocity_series[:, 1]
-    for i in range(T):
-        m = (v_t >= base_time[i]) & (v_t < base_time[i + 1])
-        if np.any(m):
-            avg_vel[i] = float(np.nanmean(v_v[m]))
-    
-    if np.isnan(avg_vel).any():
-        fallback = compute_velocity(positions, base_time)
-        nan_mask = np.isnan(avg_vel)
-        avg_vel[nan_mask] = fallback[nan_mask]
-        
-    return avg_vel
-
-
-def times_to_bin_indices(times: np.ndarray, edges: np.ndarray) -> np.ndarray:
-    idx = np.searchsorted(edges, times, side='right') - 1
-    return idx[(idx >= 0) & (idx < len(edges) - 1)]
-
-
-def _circular_smooth_deg(angles_deg: np.ndarray, smoothing_window: int = 5) -> np.ndarray:
-    if smoothing_window is None or smoothing_window <= 1:
-        return angles_deg % 360.0
-    ang_rad = np.deg2rad(angles_deg % 360.0)
-    sin_vals = np.sin(ang_rad)
-    cos_vals = np.cos(ang_rad)
-    kernel = np.ones(smoothing_window) / float(smoothing_window)
-    smooth_sin = np.convolve(sin_vals, kernel, mode='same')
-    smooth_cos = np.convolve(cos_vals, kernel, mode='same')
-    return (np.rad2deg(np.arctan2(smooth_sin, smooth_cos)) % 360.0)
-
-
-def get_md_from_xy(positions: np.ndarray, smoothing_window: int = 200) -> np.ndarray:
-    x = positions[:, 1]
-    y = positions[:, 2]
-    dx = x[1:] - x[:-1]
-    dy = y[1:] - y[:-1]
-    
-    direction_raw = np.degrees(np.arctan2(-dy, dx))
-    direction = (direction_raw + 360.0) % 360.0
-    direction = _circular_smooth_deg(direction, smoothing_window=smoothing_window)
-    direction = np.concatenate([direction, [direction[-1]]])
-    return direction
-    
-    
-def _select_time_indices_in_hd_bin(locations: np.ndarray, base_time: np.ndarray,
-                                   hd_l: Tuple[float, float],
-                                   fast_mask: Optional[np.ndarray]) -> np.ndarray:
-    l0, l1 = hd_l
-    in_hd = np.where((locations[:, 3] >= l0) & (locations[:, 3] < l1))[0]
-    if in_hd.size == 0:
-        return np.array([], dtype=int)
-    loc_times = locations[in_hd, 0]
-    idx = times_to_bin_indices(loc_times, base_time)
-    if fast_mask is not None:
-        idx = idx[fast_mask[idx]]
-    return idx
-
-
-def _select_time_indices_in_md_bin(positions: np.ndarray, base_time: np.ndarray,
-                                   md_series_deg: np.ndarray, md_l: Tuple[float, float],
-                                   fast_mask: Optional[np.ndarray]) -> np.ndarray:
-    l0, l1 = md_l
-    in_md = np.where((md_series_deg >= l0) & (md_series_deg < l1))[0]
-    if in_md.size == 0:
-        return np.array([], dtype=int)
-    loc_times = positions[in_md, 0]
-    idx = times_to_bin_indices(loc_times, base_time)
-    if fast_mask is not None:
-        idx = idx[fast_mask[idx]]
-    return idx
-
-
-def _select_time_indices_in_xy_bin(locations: np.ndarray, base_time: np.ndarray,
-                                   x_win: Tuple[float, float], y_win: Tuple[float, float],
-                                   fast_mask: Optional[np.ndarray]) -> np.ndarray:
-    x0, x1 = x_win
-    y0, y1 = y_win
-    in_xy = np.where(
-        (locations[:, 1] >= x0) & (locations[:, 1] < x1) &
-        (locations[:, 2] >= y0) & (locations[:, 2] < y1)
-    )[0]
-    if in_xy.size == 0:
-        return np.array([], dtype=int)
-    loc_times = locations[in_xy, 0]
-    idx = times_to_bin_indices(loc_times, base_time)
-    if fast_mask is not None:
-        idx = idx[fast_mask[idx]]
-    return idx
-
-
-def extract_matlab_obj(obj):
-    from scipy.io.matlab._mio5_params import mat_struct
-    if not (isinstance(obj, mat_struct) or isinstance(obj, dict)):
-        return obj
-    out: Dict[str, Any] = {}
-    obj = obj.__dict__ if isinstance(obj, mat_struct) else obj
-    for key, val in obj.items():
-        if key in ['_fieldnames', 'type', 'time_unit', 'data_unit', 'name']:
-            continue
-        if isinstance(val, mat_struct) or isinstance(val, dict):
-            out[key] = extract_matlab_obj(val)
-        elif isinstance(val, np.ndarray):
-            arr = [extract_matlab_obj(v) for v in val]
-            out[key] = np.array(arr)
-        else:
-            out[key] = val
-    return out
-
-
-def load_dusz_data(base_path: Path, dataset: int, rat: str) -> Tuple[np.ndarray, np.ndarray, Dict[str, np.ndarray], Optional[np.ndarray]]:
-    dpath = base_path / f"Dataset_{dataset}" / rat / "Data"
-
-    epochs = loadmat(dpath / 'BehavEpochs.mat', struct_as_record=False, squeeze_me=True)
-    epoch_data = None
-    try:
-        epoch_data = extract_matlab_obj(epochs['wakeEp'])
-    except:
-        epoch_data = extract_matlab_obj(epochs['wake1Ep'])
-    if rat == 'A3708-200317b':
-        epoch_data = extract_matlab_obj(epochs['wake2Ep'])
-
-    try:
-        tracking = pd.read_csv(dpath / 'Tracking_data.csv')
-        tracking = tracking.set_axis(['timestamp', 'x', 'y', 'hd', 'pitch', 'roll'], axis=1)
-    except:
-        tracking = pd.read_csv(dpath / 'Tracking_data.csv')
-        tracking = tracking.set_axis(['timestamp', 'x', 'y', 'hd'], axis=1)
-
-    positions = tracking[['timestamp', 'x', 'y', 'hd']].to_numpy()
-    if not isinstance(epoch_data['start'], float):
-        epoch_data['start'] = epoch_data['start'][0]
-        epoch_data['stop'] = epoch_data['stop'][0]
-    mask_pos = (positions[:, 0] > epoch_data['start']) & (positions[:, 0] < epoch_data['stop'])
-    positions = positions[mask_pos]
-
-    positions[:, 1] += abs(float(np.nanmin(positions[:, 1])))
-    positions[:, 2] += abs(float(np.nanmin(positions[:, 2])))
-    positions[:, 3] = (positions[:, 3] + 360.0) % 360.0
-
-    # like one dataset is in diff units
-    if positions[:, 1].max() < 1:
-        positions[:, 1] *= 100
-        positions[:, 2] *= 100
-
-    cell_types_raw = loadmat(dpath / 'CellTypes.mat', struct_as_record=False, squeeze_me=True)
-    cell_types = extract_matlab_obj(cell_types_raw['CellTypes'] if 'CellTypes' in cell_types_raw else cell_types_raw)
-    hd_list = np.asarray(cell_types.get('hd', cell_types_raw.get('hd'))).astype(int).ravel()
-    ex_list = np.asarray(cell_types.get('ex', cell_types_raw.get('ex', np.ones_like(hd_list)))).astype(int).ravel()
-
-    spike_raw = loadmat(dpath / 'SpikeData.mat', struct_as_record=False, squeeze_me=True)
-    S = extract_matlab_obj(spike_raw['S'] if 'S' in spike_raw else spike_raw)
-    arr = []
-    for i, cell in enumerate(S['C']):
-        ts = np.asarray(cell['tsd']['t']).ravel()
-        if ts.size:
-            arr.append(np.column_stack([ts, np.full(ts.size, i, dtype=int)]))
-    spike_times = np.vstack(arr) if arr else np.empty((0, 2))
-    spike_times = spike_times[np.argsort(spike_times[:, 0])]
-    mask_spk = (spike_times[:, 0] > epoch_data['start']) & (spike_times[:, 0] < epoch_data['stop'])
-    spike_times = spike_times[mask_spk]
-
-    vel_path = dpath / 'Velocity.mat'
-    vel_raw = loadmat(vel_path, struct_as_record=False, squeeze_me=True)
-    vel = extract_matlab_obj(vel_raw['vel'] if 'vel' in vel_raw else vel_raw)
-    velocity_series = np.dstack((vel['t'], vel['data']))[0]
-    mask_v = (velocity_series[:, 0] > epoch_data['start']) & (velocity_series[:, 0] < epoch_data['stop'])
-    velocity_series = velocity_series[mask_v]
-
-    return spike_times, positions, {'hd': hd_list, 'ex': ex_list}, velocity_series
-
-
-def build_spike_rates(spike_times: np.ndarray, base_time: np.ndarray, tau: float, neuron_ids: np.ndarray) -> np.ndarray:
-    T = len(base_time) - 1
-    N = len(neuron_ids)
-    rates = np.zeros((T, N), dtype=float)
-    if spike_times.size == 0 or N == 0:
-        return rates
-    for n_idx, neuron_id in enumerate(neuron_ids):
-        neuron_spk = spike_times[spike_times[:, 1] == neuron_id, 0]
-        if neuron_spk.size:
-            counts, _ = np.histogram(neuron_spk, bins=base_time)
-            rates[:, n_idx] = counts.astype(float) / max(tau, 1e-9)
-    return rates
+from src.rodent_data import (
+    load_dusz_data, build_spike_rates, compute_avg_velocity_per_bin, get_md_from_xy,
+    select_time_indices_in_angle_bin, select_time_indices_in_xy_bin, split_half_rate_map,
+)
 
 
 def hdmd_fold_rate_map(spike_rates: np.ndarray, positions: np.ndarray, base_time: np.ndarray,
@@ -228,35 +24,11 @@ def hdmd_fold_rate_map(spike_rates: np.ndarray, positions: np.ndarray, base_time
     hd_edges = np.linspace(0.0, 360.0 + 1e-6, n_hd_bins + 1)
     md_edges = np.linspace(0.0, 360.0 + 1e-6, n_md_bins + 1)
 
-    T, N = spike_rates.shape
-    fold0_map = np.full((n_hd_bins, n_md_bins, N), np.nan)
-    fold1_map = np.full((n_hd_bins, n_md_bins, N), np.nan)
-    rate_map  = np.full((n_hd_bins, n_md_bins, N), np.nan)
-    occupancy = np.zeros((n_hd_bins, n_md_bins), dtype=float)
-
-    for ih in range(n_hd_bins):
-        hd_win = (hd_edges[ih], hd_edges[ih + 1])
-        idx_hd = _select_time_indices_in_hd_bin(positions, base_time, hd_win, fast_mask)
-        if idx_hd.size == 0:
-            continue
-        for im in range(n_md_bins):
-            md_win = (md_edges[im], md_edges[im + 1])
-            idx_md = _select_time_indices_in_md_bin(positions, base_time, md_series_deg, md_win, fast_mask)
-            if idx_md.size == 0:
-                continue
-            idx = np.intersect1d(idx_hd, idx_md, assume_unique=False)
-            if idx.size < floor:
-                continue
-            np.random.shuffle(idx)
-            half = len(idx) // 2
-            fold0 = spike_rates[idx[:half], :]
-            fold1 = spike_rates[idx[half:], :]
-            if fold1.shape[0] > half:
-                fold1 = fold1[:-1, :]
-            fold0_map[ih, im, :] = np.nanmean(fold0, axis=0)
-            fold1_map[ih, im, :] = np.nanmean(fold1, axis=0)
-            rate_map[ih, im, :]  = np.nanmean(spike_rates[idx, :], axis=0)
-            occupancy[ih, im]    = float(2 * half)
+    idx_hd = [select_time_indices_in_angle_bin(positions, base_time, positions[:, 3], (hd_edges[ih], hd_edges[ih + 1]), fast_mask)
+              for ih in range(n_hd_bins)]
+    idx_md = [select_time_indices_in_angle_bin(positions, base_time, md_series_deg, (md_edges[im], md_edges[im + 1]), fast_mask)
+              for im in range(n_md_bins)]
+    fold0_map, fold1_map, rate_map, occupancy = split_half_rate_map(spike_rates, idx_hd, idx_md, floor)
 
     return fold0_map, fold1_map, rate_map, occupancy, (hd_edges, md_edges)
 
@@ -277,37 +49,12 @@ def xyhd_fold_rate_map(spike_rates: np.ndarray, locations: np.ndarray, base_time
     y_edges = np.linspace(ymin, ymax + 1e-6, n_loc_bins + 1)
     hd_edges = np.linspace(0.0, 360.0 + 1e-6, n_hd_bins + 1)
 
-    T, N = spike_rates.shape
-    fold0_map = np.full((n_loc_bins, n_loc_bins, n_hd_bins, N), np.nan)
-    fold1_map = np.full((n_loc_bins, n_loc_bins, n_hd_bins, N), np.nan)
-    rate_map  = np.full((n_loc_bins, n_loc_bins, n_hd_bins, N), np.nan)
-    occupancy = np.zeros((n_loc_bins, n_loc_bins, n_hd_bins), dtype=float)
-
-    for iy in range(n_loc_bins):
-        y_win = (y_edges[iy], y_edges[iy + 1])
-        for ix in range(n_loc_bins):
-            x_win = (x_edges[ix], x_edges[ix + 1])
-            idx_xy = _select_time_indices_in_xy_bin(locations, base_time, x_win, y_win, fast_mask)
-            if idx_xy.size == 0:
-                continue
-            for ih in range(n_hd_bins):
-                hd_win = (hd_edges[ih], hd_edges[ih + 1])
-                idx_hd = _select_time_indices_in_hd_bin(locations, base_time, hd_win, fast_mask)
-                if idx_hd.size == 0:
-                    continue
-                idx = np.intersect1d(idx_xy, idx_hd, assume_unique=False)
-                if idx.size < floor:
-                    continue
-                np.random.shuffle(idx)
-                half = len(idx) // 2
-                fold0 = spike_rates[idx[:half], :]
-                fold1 = spike_rates[idx[half:], :]
-                if fold1.shape[0] > half:
-                    fold1 = fold1[:-1, :]
-                fold0_map[iy, ix, ih, :] = np.nanmean(fold0, axis=0)
-                fold1_map[iy, ix, ih, :] = np.nanmean(fold1, axis=0)
-                rate_map[iy, ix, ih, :]  = np.nanmean(spike_rates[idx, :], axis=0)
-                occupancy[iy, ix, ih]    = float(2 * half)
+    idx_xy = [select_time_indices_in_xy_bin(locations, base_time, (x_edges[ix], x_edges[ix + 1]), (y_edges[iy], y_edges[iy + 1]), fast_mask)
+              for iy in range(n_loc_bins) for ix in range(n_loc_bins)]
+    idx_hd = [select_time_indices_in_angle_bin(locations, base_time, locations[:, 3], (hd_edges[ih], hd_edges[ih + 1]), fast_mask)
+              for ih in range(n_hd_bins)]
+    maps = split_half_rate_map(spike_rates, idx_xy, idx_hd, floor)
+    fold0_map, fold1_map, rate_map, occupancy = (m.reshape(n_loc_bins, n_loc_bins, *m.shape[1:]) for m in maps)
 
     return fold0_map, fold1_map, rate_map, occupancy, (x_edges, y_edges, hd_edges)
 

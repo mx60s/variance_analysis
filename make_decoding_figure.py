@@ -10,7 +10,6 @@ FIGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'figs')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.ndimage import gaussian_filter1d
-from scipy.stats import poisson
 
 plt.rcParams['mathtext.fontset'] = 'cm'
 

@@ -4,7 +4,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
-import numpy as np
 import math
 
 '''
@@ -128,61 +127,6 @@ class MultiHeadAttention(nn.Module):
         )
 
         return context, attn
-
-
-class RotaryEncoding(nn.Module):
-    def __init__(self, in_channels, max_len=2048, base=10000, device="cuda:0"):
-        super().__init__()
-        self.in_channels = in_channels
-        self.max_len = max_len
-        self.base = base
-        self.inv_freq = 1.0 / (
-            self.base
-            ** (
-                torch.arange(0, self.in_channels, 2, dtype=torch.int64)
-                .float()
-                .to(device)
-                / self.in_channels
-            )
-        )
-        self.cache_len = 0
-
-    def _set_cos_sin_cache(self, seq_len, device, dtype):
-        self.cache_len = seq_len
-        t = torch.arange(self.cache_len, device=device, dtype=torch.int64).type_as(
-            self.inv_freq
-        )
-
-        freqs = torch.outer(t, self.inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.cos = emb.cos().to(dtype)
-        self.sin = emb.sin().to(dtype)
-
-    def forward(self, x, seq_len=None):
-        # x: [batch_dim, time_dim, num_heads, head_dim]
-        if seq_len > self.cache_len:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos[:seq_len].to(dtype=x.dtype),
-            self.sin[:seq_len].to(dtype=x.dtype),
-        )
-
-
-def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def apply_position_embedding(q, k, cos, sin, position_ids, unsqueeze_dim=2):
-    # q: [batch_dim, time_dim, num_heads, head_dim]
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
 
 
 class PositionalEncoding(nn.Module):
@@ -336,26 +280,6 @@ class UpBlock2d(nn.Module):
             x = layer(x)
         return x
 
-
-class ConvBottleneck(nn.Module):
-    def __init__(self, actions: int, in_channels: int, out_channels: int, features: int=4):
-        super().__init__()
-        self.features = features
-        # self.linear = nn.Linear(actions, self.features * 8 * 8, bias=False)
-        self.linear = nn.Linear(actions, self.features * 2 * 2, bias=False)
-        self.conv = nn.Conv2d(self.features + in_channels, out_channels, kernel_size=1, bias=False)
-        self.bn = nn.BatchNorm2d(out_channels)
-        
-    def forward(self, features, actions):
-        B, C, H, W = features.shape
-        conv_actions = self.linear(actions).reshape(B, self.features, H, W)
-
-        output = torch.cat([features, conv_actions], dim=1)
-        output = self.conv(output)
-        output = self.bn(output)
-        output = F.relu(output)
-
-        return output
 
 class Encoder(nn.Module):
     def __init__(self, in_channels: int, layers: List[int]) -> None:
@@ -560,123 +484,3 @@ class PredictiveCoder(nn.Module):
             f = f.reshape(B, L, C_out, H_out, W_out)
 
             return f
-
-
-class VestibularCoder(nn.Module):
-    def __init__(
-        self, in_channels: int, out_channels: int, layers: List[int], seq_len: int, num_actions:int = None) -> None:
-        super().__init__()
-        self.encoder = Encoder(in_channels, layers)
-        self.decoder = BiggerDecoder(in_channels * 2, out_channels, layers[::-1])
-        self.attention_1 = MultiHeadAttention(128 * 2, num_heads=8)
-        self.ffn_1 = FFN(128 * 2, 128 * 2)
-        self.attention_2 = MultiHeadAttention(128 * 2, num_heads=8)
-        self.ffn_2 = FFN(128 * 2, 128 * 2)
-        self.mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
-        self.bottleneck = ConvBottleneck(actions=num_actions, in_channels=128, out_channels=128, features=128)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
-        B, L, C, H, W = x.shape
-        x = x.reshape(B * L, C, H, W)
-        actions = actions.reshape(B*L, -1)
-
-        f = self.encoder(x)
-        f = self.bottleneck(f, actions)
-
-        f = f.reshape(B, L, f.shape[1], f.shape[2], f.shape[3])
-
-        residual = f
-        f = self.attention_1(f, f, f, self.mask)[0]
-        f = f + residual
-        f = F.layer_norm(f, f.shape[2:])
-
-        residual = f
-        f = self.ffn_1(f) + residual
-        f = F.layer_norm(f, f.shape[2:])
-
-        residual = f
-        f = self.attention_2(f, f, f, self.mask)[0]
-        f = f + residual
-        f = F.layer_norm(f, f.shape[2:])
-
-        residual = f
-        f = self.ffn_2(f) + residual
-        f = F.layer_norm(f, f.shape[2:])
-
-        f = f.reshape(B * L, f.shape[2], f.shape[3], f.shape[4])
-
-        x = self.decoder(f)
-        x = x.reshape(B, L, C, H, W)
-
-        return x
-
-    def get_latents(self, x: torch.Tensor, actions: torch.Tensor = None, which=-1) -> torch.Tensor:
-        with torch.no_grad():
-            B, L, C, H, W = x.shape
-            x = x.reshape(B * L, C, H, W)
-    
-            f = self.encoder(x)
-            f = self.bottleneck(f, actions)
-            
-            f = f.reshape(B, L, f.shape[1], f.shape[2], f.shape[3])
-    
-            if which == 0:
-                return f
-    
-            residual = f
-            f = self.attention_1(f, f, f, self.mask)[0]
-            f = f + residual
-            f = F.layer_norm(f, f.shape[1:])
-    
-            residual = f
-            f = self.ffn_1(f) + residual
-            f = F.layer_norm(f, f.shape[1:])
-    
-            if which == 1:
-                return f
-    
-            residual = f
-            f = self.attention_2(f, f, f, self.mask)[0]
-            f = f + residual
-            f = F.layer_norm(f, f.shape[1:])
-    
-            residual = f
-            f = self.ffn_2(f) + residual
-            f = F.layer_norm(f, f.shape[1:])
-    
-            return f
-
-class ConvBottleneck(nn.Module):
-    def __init__(self, actions: int, in_channels: int, out_channels: int, features: int=128):
-        super().__init__()
-        self.features = features
-        self.linear = nn.Linear(2, self.features * 8 * 8, bias=True) #512
-        self.conv = nn.Conv2d(self.features + in_channels, out_channels, kernel_size=1, bias=False)
-        self.bn = nn.BatchNorm2d(out_channels)
-        
-    def forward(self, features, actions):
-        B, C, H, W = features.shape
-        theta = torch.deg2rad(actions)
-        phi = torch.stack([torch.cos(theta), torch.sin(theta)], dim=-1)   # (B, 2)
-        
-        conv_actions = self.linear(phi).view(B, self.features, H, W)
-        conv_actions = self.linear(actions).reshape(B, self.features, H, W)
-
-        output = torch.cat([features, conv_actions], dim=1)
-        
-        #output = self.conv(output)
-        #output = self.bn(output)
-        #output = F.relu(output)
-
-        return output
-
-    def get_latents(self, features, actions):
-        B, C, H, W = features.shape
-        return self.linear(actions).reshape(B, self.features, H, W)

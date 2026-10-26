@@ -8,24 +8,8 @@ import time
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 import numpy as np
-from tqdm import tqdm
-from scipy.io import loadmat
-from scipy.ndimage import gaussian_filter1d, gaussian_filter
 
-
-def compute_velocity(locations: np.ndarray, base_time: np.ndarray) -> np.ndarray:
-    """Mean speed (cm/s) per time bin. locations: [t, x, y, hd]."""
-    if locations.shape[0] < 4:
-        raise ValueError("locations must have >= 4 rows to estimate time step.")
-    time_step = float(locations[3, 0] - locations[2, 0])
-    steps = np.diff(locations[:, 1:3], axis=0)
-    steps = np.vstack((steps, steps[-1]))
-    speed_samples = np.linalg.norm(steps, axis=1) / max(time_step, 1e-9)
-    v = np.zeros(len(base_time) - 1, dtype=float)
-    for t in range(len(base_time) - 1):
-        idx = np.where((locations[:, 0] >= base_time[t]) & (locations[:, 0] < base_time[t + 1]))[0]
-        v[t] = 0.0 if idx.size == 0 else float(np.mean(speed_samples[idx]))
-    return v
+from src.rodent_data import load_pfeiffer_data, build_spike_rates, compute_velocity, split_half_rate_map
 
 
 def _nearest_edge_indices(base_time: np.ndarray, times: np.ndarray) -> np.ndarray:
@@ -52,6 +36,18 @@ def _fast_bin_mask(base_time: np.ndarray, loc_idx: np.ndarray, fast_bins: np.nda
     return d <= timebin_tol + 1e-8 * np.abs(t)   # np.isclose default rtol is 1e-5 on |b|; tighten but keep atol
 
 
+def _nearest_fast_bins(loc_times: np.ndarray, base_time: np.ndarray, fast_bins: Optional[np.ndarray],
+                       timebin_tol: float) -> np.ndarray:
+    loc_idx = _nearest_edge_indices(base_time, loc_times)
+
+    if fast_bins is not None and fast_bins.size:
+        mask = _fast_bin_mask(base_time, loc_idx, fast_bins, timebin_tol)
+        loc_idx = loc_idx[mask]
+
+    T = len(base_time) - 1
+    return loc_idx[(loc_idx >= 0) & (loc_idx < T)]
+
+
 def _select_time_indices_in_hd_bin(
     locations: np.ndarray,
     base_time: np.ndarray,
@@ -63,16 +59,7 @@ def _select_time_indices_in_hd_bin(
     in_hd = np.where((locations[:, 3] >= l0) & (locations[:, 3] < l1))[0]
     if in_hd.size == 0:
         return np.array([], dtype=int)
-
-    loc_times = locations[in_hd, 0]
-    loc_idx = _nearest_edge_indices(base_time, loc_times)
-
-    if fast_bins is not None and fast_bins.size:
-        mask = _fast_bin_mask(base_time, loc_idx, fast_bins, timebin_tol)
-        loc_idx = loc_idx[mask]
-
-    T = len(base_time) - 1
-    return loc_idx[(loc_idx >= 0) & (loc_idx < T)]
+    return _nearest_fast_bins(locations[in_hd, 0], base_time, fast_bins, timebin_tol)
 
 
 def _select_time_indices_in_xy_bin(
@@ -91,28 +78,7 @@ def _select_time_indices_in_xy_bin(
     )[0]
     if in_xy.size == 0:
         return np.array([], dtype=int)
-
-    loc_times = locations[in_xy, 0]
-    loc_idx = _nearest_edge_indices(base_time, loc_times)
-
-    if fast_bins is not None and fast_bins.size:
-        mask = _fast_bin_mask(base_time, loc_idx, fast_bins, timebin_tol)
-        loc_idx = loc_idx[mask]
-
-    T = len(base_time) - 1
-    return loc_idx[(loc_idx >= 0) & (loc_idx < T)]
-
-
-def build_spike_rates(spike_times: np.ndarray, base_time: np.ndarray, tau: float, excit_list: np.ndarray) -> np.ndarray:
-    T = len(base_time) - 1
-    N = len(excit_list)
-    rates = np.zeros((T, N), dtype=float)
-    for n_idx, neuron_id in enumerate(excit_list):
-        neuron_spk = spike_times[spike_times[:, 1] == neuron_id, 0]
-        if neuron_spk.size:
-            counts, _ = np.histogram(neuron_spk, bins=base_time)
-            rates[:, n_idx] = counts.astype(float) / max(tau, 1e-9)
-    return rates
+    return _nearest_fast_bins(locations[in_xy, 0], base_time, fast_bins, timebin_tol)
 
     
 def xyhd_fold_rate_map(
@@ -126,50 +92,21 @@ def xyhd_fold_rate_map(
     vel_threshold: float,
     filter_vel: bool,
     floor: int = 2,
-) -> Tuple[np.ndarray, np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
     fast_idx = np.where(avg_vel_bins >= vel_threshold)[0]
     fast_bins = base_time[fast_idx] if filter_vel else None
 
     hd_edges = np.linspace(0.0, 360.0 + 1e-6, n_hd_bins + 1)
 
-    T, N = spike_rates.shape
     n_y_bins = len(y_edges) - 1
     n_x_bins = len(x_edges) - 1
 
-    fold0_map = np.full((n_y_bins, n_x_bins, n_hd_bins, N), np.nan)
-    fold1_map = np.full((n_y_bins, n_x_bins, n_hd_bins, N), np.nan)
-    rate_map = np.full((n_y_bins, n_x_bins, n_hd_bins, N), np.nan)
-    occupancy = np.zeros((n_y_bins, n_x_bins, n_hd_bins), dtype=float)
-
-    for iy in tqdm(range(n_y_bins), desc="Y bins"):
-        y_win = (y_edges[iy], y_edges[iy+1])
-        for ix in range(n_x_bins):
-            x_win = (x_edges[ix], x_edges[ix+1])
-            idx_xy = _select_time_indices_in_xy_bin(locations, base_time, x_win, y_win, fast_bins)
-            if idx_xy.size == 0:
-                continue
-            
-            for ih in range(n_hd_bins):
-                hd_win = (hd_edges[ih], hd_edges[ih+1])
-                idx_hd = _select_time_indices_in_hd_bin(locations, base_time, hd_win, fast_bins)
-                if idx_hd.size == 0:
-                    continue
-                
-                idx = np.intersect1d(idx_xy, idx_hd, assume_unique=False)
-                if idx.size < floor:
-                    continue
-                
-                half = len(idx) // 2
-                np.random.shuffle(idx)
-                fold0, fold1 = spike_rates[idx[:half], :], spike_rates[idx[half:], :]
-                
-                if fold1.shape[0] > half:
-                    fold1 = fold1[:-1, :]
-                
-                fold0_map[iy, ix, ih, :] = np.nanmean(fold0, axis=0)
-                fold1_map[iy, ix, ih, :] = np.nanmean(fold1, axis=0)
-                rate_map[iy, ix, ih, :] = np.nanmean(spike_rates[idx, :], axis=0)
-                occupancy[iy, ix, ih] = half * 2
+    idx_xy = [_select_time_indices_in_xy_bin(locations, base_time, (x_edges[ix], x_edges[ix+1]), (y_edges[iy], y_edges[iy+1]), fast_bins)
+              for iy in range(n_y_bins) for ix in range(n_x_bins)]
+    idx_hd = [_select_time_indices_in_hd_bin(locations, base_time, (hd_edges[ih], hd_edges[ih+1]), fast_bins)
+              for ih in range(n_hd_bins)]
+    maps = split_half_rate_map(spike_rates, idx_xy, idx_hd, floor)
+    fold0_map, fold1_map, rate_map, occupancy = (m.reshape(n_y_bins, n_x_bins, *m.shape[1:]) for m in maps)
 
     return fold0_map, fold1_map, rate_map, occupancy, (x_edges, y_edges, hd_edges)
     
@@ -204,11 +141,7 @@ def get_fold_ratemaps(args: Optional[argparse.Namespace] = None, /, **overrides:
     print(f"tau: {d['tau']:.3f}s | vel_th: {d['vel_threshold']} cm/s | filter_vel: {d['filter_vel']}")
     t0 = time.time()
 
-    locations = loadmat(str(data_path / 'Position_Data.mat'))['Position_Data']
-    spike_data = loadmat(str(data_path / 'Spike_Data.mat'))
-    spike_times_raw = spike_data['Spike_Data']  # columns: [time, neuron_id]
-    excit = spike_data['Excitatory_Neurons']
-    excit_list = np.asarray(excit).ravel().astype(spike_data['Spike_Data'].dtype)
+    locations, spike_times_raw, excit_list = load_pfeiffer_data(data_path)
     print(f"Spikes: {len(spike_times_raw)} | Excitatory neurons: {len(excit_list)} | Position samples: {locations.shape[0]}")
 
     base_time = np.arange(spike_times_raw[0, 0], spike_times_raw[-1, 0] + d["tau"], d["tau"])
@@ -302,6 +235,29 @@ def get_fold_ratemaps(args: Optional[argparse.Namespace] = None, /, **overrides:
         "elapsed_min": float(elapsed_min),
     }
     
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Make split-half XY×HD rate maps (Pfeiffer data)."
+    )
+    parser.add_argument("--data_path", type=str, default="./data/rodents/pfeiffer",
+                        help="Root dir containing Rat{rat}/Open1")
+    parser.add_argument("--save_path", type=str, default="./results/rodents/pfeiffer",
+                        help="Directory to write outputs")
+    parser.add_argument("--rat", type=str, default="1", help="Rat ID")
+
+    parser.add_argument("--n_loc_bins", type=int, default=100, help="Number of X (and Y) bins")
+    parser.add_argument("--n_hd_bins", type=int, default=90, help="Number of head-direction bins")
+
+    parser.add_argument("--tau", type=float, default=0.250, help="Time bin size (s)")
+    parser.add_argument("--vel_threshold", type=float, default=5.0, help="Velocity threshold (cm/s)")
+    parser.add_argument("--no_filter_vel", action="store_false", dest="filter_vel",
+                        help="Keep low-velocity bins")
+    parser.add_argument("--floor", type=int, default=5, help="Minimum time bins per map cell")
+    parser.add_argument("--seed", type=int, default=0, help="Seed for the random fold split")
+
+    return parser
+
 
 def main() -> None:
     parser = _build_parser()

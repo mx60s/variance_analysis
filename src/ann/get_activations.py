@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import math, os, sys, warnings
+import os, warnings
 from pathlib import Path
-from typing import Callable, Iterator, List
 
-import numpy as np
 import torch
 import torch.nn.functional as F
-from tqdm.auto import tqdm
 from torchvision import models
 from torchvision.models.feature_extraction import create_feature_extractor
 from transformers import (
@@ -18,18 +15,6 @@ from transformers import (
 )
 
 from .predictive_coder import PredictiveCoder
-
-'''
-data is loaded like this:
->>> np.load('small_world_r17_pos.npy')
-array([[120.5, 197.5,   0. ],
-       [120.5, 197.5,  21. ],
-       [120.5, 197.5,  42. ],
-       ...,
-       [136.5, 213.5, 294. ],
-       [136.5, 213.5, 315. ],
-       [136.5, 213.5, 336. ]])
-'''
 
 hf_logging.set_verbosity_error()
 os.environ["TRANSFORMERS_NO_TF"] = "1"
@@ -228,87 +213,3 @@ def load_model(
 
     model = create_feature_extractor(model, {output_layer: "out"}).to(device)
     return model, preprocess_fn
-
-
-def _iter_batches(arr: np.ndarray, batch_size: int) -> Iterator[np.ndarray]:
-    for i in range(0, len(arr), batch_size):
-        yield arr[i : i + batch_size]
-
-from pathlib import Path
-import numpy as np
-import torch
-import torch.nn.functional as F
-from typing import Callable
-from tqdm.auto import tqdm
-
-def get_activations(
-    model          : torch.nn.Module,
-    preprocess_fn  : Callable[[np.ndarray], torch.Tensor],
-    data           : np.ndarray,                       # (N, H, W, C)
-    *,
-    model_name     : str,
-    layer_name     : str,
-    batch_size     : int   = 64,
-    device         : str   | torch.device = "cpu",
-    dest_dir       : str   | Path = "/",
-    noise_coeff    : float = 0.0,
-    # New / simplified controls
-    max_units      : int   = 8000,                     # hard cap
-    sample_seed    : int   = 413,
-) -> Path:
-    """
-    Streams images → activations and saves a single acts.npz.
-    If the selected layer has more than `max_units` features per sample, a
-    fixed subset of exactly `max_units` units is chosen on the first batch
-    and reused for all subsequent batches.
-
-    Returns
-    -------
-    Path to the saved acts.npz file.
-    """
-    device = torch.device(device) if isinstance(device, str) else device
-    model.to(device).eval()
-
-    dest_dir = Path(dest_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[Saving activations] {dest_dir}")
-
-    # predictive coder wants sequences
-    is_predictive = model_name.startswith("predictive_coder")
-    seq_len = 10 if is_predictive else None
-
-    selected_idx: torch.Tensor | None = None
-    bufs: list[np.ndarray] = []
-
-    for batch_np in tqdm((data[i:i+batch_size] for i in range(0, len(data), batch_size))):
-        if is_predictive:
-            batch_np = np.repeat(batch_np[:, None, ...], seq_len, axis=1)
-
-        x = preprocess_fn(batch_np).to(device)
-        out = model(x)
-        if isinstance(out, dict):                    # torchvision extractor
-            out = next(iter(out.values()))
-        if is_predictive:
-            out = out[:, -1]                         # last timestep
-
-        out = out.flatten(1)
-
-        if out.shape[1] > max_units:
-            if selected_idx is None:
-                g = torch.Generator().manual_seed(sample_seed)  # CPU generator, so the same units are picked on any device
-                selected_idx = torch.randperm(out.shape[1], generator=g)[:max_units].to(out.device)
-            out = out.index_select(1, selected_idx)
-
-        bufs.append(out.detach().cpu().numpy())
-
-    acts = np.concatenate(bufs, axis=0)  # shape (N, D_sel_or_full)
-    acts_path = dest_dir / "acts.npz"
-    np.savez_compressed(acts_path, activations=acts)
-
-    # Save indices if subsampling happened
-    if selected_idx is not None:
-        np.save(dest_dir / "unit_indices.npy", selected_idx.cpu().numpy())
-
-    print("Finished processing model activations.")
-    return acts_path
-

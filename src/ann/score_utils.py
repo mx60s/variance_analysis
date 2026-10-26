@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import logging
 import cv2
 import numpy as np
 from typing import Any, Tuple
 from copy import deepcopy
 from scipy import ndimage
-from skimage.measure import regionprops
 
 '''
 Everything marked with _old is the Luo et al implementation.

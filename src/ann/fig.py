@@ -1,11 +1,10 @@
 import matplotlib.pyplot as plt
 from matplotlib import cm
-from pathlib import Path
 from typing import Mapping, Sequence
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from typing import Tuple, List
+from typing import Tuple
 import re
 
 def plot_cell_type_pie(
@@ -225,7 +224,6 @@ def plot_neuron_2d_3d(
     total_height = ydom3[1] - ydom3[0]
     slot_height = (total_height - gap * (n_slices - 1)) / n_slices
 
-    slice_centers = []
     next_idx = start_idx
 
     for si in range(len(slice_indices) - 1):
@@ -344,8 +342,6 @@ def visualize_conv1_filters(
     -------
     matplotlib.figure.Figure
     """
-    import torch
-
     # Extract conv1 weights: (out_channels, in_channels, H, W) = (64, 3, 7, 7)
     if hasattr(model, 'encoder'):
         weights = model.encoder.conv1.weight.detach().cpu().numpy()
