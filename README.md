@@ -65,7 +65,7 @@ Generated files go to `results/` (rate maps, EV values, decoding output) and `da
 
 The rate-map builders split each bin's samples into the two folds at random, with a fixed seed (`seed=0`), so a rerun gives identical results.
 
-For network layers with more than 8,000 units, the activation code keeps a random subset of 8,000 units. The cached activations on the Drive were made on a CUDA GPU in Colab, where that subset came out differently from the one behind the paper's figures, because PyTorch's seeded random numbers differ between devices. The scatters therefore show different individual units but the same distribution. The code now draws the subset on the CPU, so new runs pick the same units on any machine. That subset is different again from both of those, so delete a layer's cache and rerun it if you need it to match the code exactly.
+For network layers with more than 8,000 units, the activation code keeps a random subset of 8,000 units. PyTorch's seeded random numbers differ between devices (CPU and Apple MPS give different subsets for the same seed), so the code draws the subset on the CPU to pick the same units on any machine. The activation caches on the Drive were made before this change, and EV scatters computed from them show the same distribution as the paper's figures but different individual units (checked for ResNet-50 `layer3`). Delete a layer's cache and rerun it to get the subset the current code selects.
 
 ## Running
 
