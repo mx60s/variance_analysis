@@ -56,7 +56,7 @@ data/
     predictive_coder.ckpt
 ```
 
-- **Pfeiffer & Foster 2013** (Nature 497:74–79): CA1 place cells from 4 rats navigating an open arena. Only the `Open1` session is used.
+- **Pfeiffer & Foster 2013** (Nature 497:74–79): CA1 place cells from 4 rats navigating an open arena. The data aren't public; we got them directly from the authors' lab. Only the `Open1` session is used.
 - **Duszkiewicz et al. 2024** (Nat Neurosci 27:782–792): postsubiculum recordings in mice. The data is public; see the paper's data availability statement. Only Datasets 1 and 2 are used, and within them only the square-arena sessions, chosen from `Dataset_metadata.xlsx`.
 - **Minecraft panoramas**: first-person views recorded with the Malmo platform at every block of a 17x17 area. The recording script is not in this repository.
 - **Predictive coder checkpoint**: our own training of the architecture from Gornet & Thomson 2024 ([jgornet/predictive-coding-recovers-maps](https://github.com/jgornet/predictive-coding-recovers-maps)). The training code is not in this repository. `load_model` raises an error if the checkpoint is missing. ResNet-50 and VGG16 use the torchvision ImageNet weights, which download automatically.
