@@ -117,7 +117,7 @@ If the tuning curve for $y$ does not change with $x$, the response of the neuron
 \begin{figure}[h!]
     \centering
     \includegraphics[width=0.72\textwidth]{figs/method_schematic.pdf}\\[4pt]
-    \includegraphics[width=0.68\textwidth]{figs/smoothed_binning_fig_corr.pdf}
+    \includegraphics[width=0.68\textwidth]{figs/estimator_validation.pdf}
     \caption{\textbf{The contribution of each stimulus variable is quantified with the cross-fold correlation method.}
     (Top) Schematic of the estimation procedure for the contribution of stimulus $A$. The data are split into two halves and a joint tuning map is estimated from each fold. Each map is sliced at every value of $A$ to obtain tuning curves over the other variable $B$; the tuning curve at $a_i$ in fold~0 is correlated with the tuning curve at $a_j$ in fold~1 to form the cross-fold correlation matrix $C_{ij}$ (Eq.~\ref{eq:1}). The mean diagonal is the split-half reliability of the maps; the contribution of $A$ is $\mathrm{EV}(A)=1-\langle C_{ij}\rangle_{i\neq j}$ (Eq.~\ref{eq:2}).
     (Bottom) Validation on simulated Poisson neurons whose log firing rate is a Gaussian ridge rotated by $\theta=0\degree$, $25\degree$ and $45\degree$, sampled on a $15\times 15$ grid with $1{,}000$ samples (top row: estimated joint tuning maps from one simulation). Histograms show $\mathrm{EV}(x)$ (blue) and $\mathrm{EV}(y)$ (orange) over 600 simulated data sets, each split once into two folds; dashed lines mark the values computed from the noiseless tuning map. At $\theta=0\degree$ the neuron depends on $x$ only: $\mathrm{EV}(x)=1.00$, and $\mathrm{EV}(y)=0.05$, which equals the finite-sampling floor $1-\langle C_{ii}\rangle$ of the split-half estimate. At $\theta=25\degree$ the estimates are $\mathrm{EV}(x)=1.04$ and $\mathrm{EV}(y)=0.76$ (noiseless values $1.01$ and $0.74$), and at $\theta=45\degree$ both are $1.06$ (noiseless value $1.06$). $\mathrm{EV}$ exceeds 1 when tuning curves at distant positions are anticorrelated. The size of the floor depends on how densely the joint map is sampled (Supplementary Fig.~\ref{fig:si_floor}).
@@ -419,7 +419,7 @@ On an axis to which the neuron is invariant, the true $\mathrm{EV}$ is 0, but th
 
 \begin{figure}[h!]
     \centering
-    \includegraphics[width=0.95\textwidth]{figs/binning_noise_floor_sweep.pdf}
+    \includegraphics[width=0.95\textwidth]{figs/noise_floor_sweep.pdf}
     \caption{\textbf{The finite-sampling floor of the split-half estimator is set by the reliability of the two folds.} Simulated neuron tuned to $x$ only ($\theta=0\degree$), so the true $\mathrm{EV}(y)=0$ and $\mathrm{EV}(x)=1$. Lines are means and shaded bands $\pm1$~s.d. over 100 simulated data sets. (a) Varying the number of bins per axis at $N=1{,}000$ samples. (b) Varying the number of samples at $15\times15$ bins. Blue: $\mathrm{EV}(x)$ on the tuned axis. Orange: $\mathrm{EV}(y)=1-\langle C_{ij}\rangle_{i\neq j}$ on the untuned axis. Dashed purple: the floor $1-\langle C_{ii}\rangle_i$. Green: reliability-normalized $\mathrm{EV}_{\mathrm{norm}}(y)$. The untuned-axis estimate equals the floor down to about 4 samples per bin; with sparser sampling it exceeds the floor. The tuned axis is recovered in every condition.}
     \label{fig:si_floor}
 \end{figure}

@@ -85,7 +85,7 @@ Opening the notebooks in Jupyter also works if you skip the setup cells at the t
 | `notebooks/run_model_layers.py` | The same EV pipeline as a script, for batch runs: `EV_MODELS='{"resnet50":["layer3"]}' EV_DEVICE=mps python notebooks/run_model_layers.py` |
 | `notebooks/1d_decoding.ipynb` | Bayesian decoding of location, HD and MD vs chance: `*_decoding_vs_chance.pdf` |
 | `notebooks/rodent_summary.py` | Prints the rodent numbers quoted in the manuscript (EV fractions and medians, finite-sampling floors, HD–MD coupling, mean decoding errors) from `results/rodents/`. Run it after the two notebooks above. |
-| `notebooks/binning_bias_fig.ipynb` | Simulations of the estimator and its finite-sampling floor: `smoothed_binning_fig_corr.pdf`, `binning_noise_floor_sweep.*` |
+| `notebooks/estimator_simulations.ipynb` | Simulations that validate the estimator and measure its finite-sampling floor: `estimator_validation.pdf`, `noise_floor_sweep.*` |
 | `notebooks/marginals_example.ipynb`, `notebooks/glm.ipynb` | Motivating examples for marginal tuning and GLMs: `fig2.pdf`, `glm*.pdf` |
 | `make_method_figure.py`, `make_decoding_figure.py` | Schematics: `method_schematic.*`, `decoding_schematic.*` |
 | `make_example_panels.py` | Example-cell panels (joint location × HD and HD × MD maps of single cells, or of single network units). `python make_example_panels.py paper` redraws the place cell and HD cell examples of the manuscript into `figs/examples/`. |
@@ -99,25 +99,6 @@ The results only reproduce with these settings. Don't change them without rechec
 - **Pfeiffer, location x HD:** 20x20 location bins, 60 HD bins, tau = 0.25 s, speed > 5 cm/s, occupancy floor 5. Smoothed with σ = (1, 2), wrapping only the HD axis.
 - **Duszkiewicz, location x HD:** 20x20 location bins, 90 HD bins, `vel_threshold=2`, `floor=5`. A higher floor (e.g. 10) mostly keeps stationary periods, which makes HD cells look location-tuned.
 - **Duszkiewicz, HD x MD:** 90 x 90 bins, `vel_threshold=1`, `floor=10`. Both axes are circular.
-
-## Current results
-
-These are the numbers in the manuscript:
-
-- Place cells: EV_xy > EV_hd for 99% of cells (n = 551).
-- HD cells: EV_hd > EV_xy for 94% of cells (n = 1,489, 30 sessions).
-- HD vs MD: EV_hd > EV_md for 100% of cells (n = 1,489).
-- Trained network layers lie on the diagonal (EV_xy ≈ EV_hd ≈ 0.9). The untrained ResNet-50 is the exception.
-
-Each EV comes with a finite-sampling floor, 1 − ⟨C_ii⟩: the value EV takes for a neuron that is invariant to that variable. Median floors and reliability-normalized contributions, (⟨C_ii⟩ − ⟨C_ij⟩)/⟨C_ii⟩, with the pipeline settings above:
-
-- Place cells: EV_hd 0.49 with a floor of 0.19; normalized 0.37 for HD and 0.93 for location. So place fields keep their location across head directions, while their shape changes modestly with head direction.
-- HD cells: EV_xy 0.67 with a floor of 0.32; normalized 0.52 for location and 0.85 for HD.
-- HD vs MD: EV_md 0.18 with a floor of 0.04; normalized 0.14.
-
-The measure ignores gain changes, because Pearson correlation is invariant to scale and offset. Head-direction modulation of place-field peak rate therefore doesn't show up in EV_hd.
-
-In the Duszkiewicz sessions, HD and movement direction are only weakly coupled. The HD x MD joint map is therefore well populated, so EV_hd ≫ EV_md is not an artifact of sampling.
 
 ## Known gaps
 
