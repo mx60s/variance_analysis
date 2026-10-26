@@ -121,7 +121,7 @@ In the Duszkiewicz sessions, HD and movement direction are only weakly coupled. 
 
 ## Known gaps
 
-- The ResNet example panels in the supplement (`resnet50_layer*_N*.pdf`) were drawn from a different 8,000-unit subset than the one in the current activation caches, so `make_example_panels.py model` can't redraw those same units.
+- The ResNet example panels in the supplement (`resnet50_layer*_N*.pdf`) were made in November 2025 from an earlier activation run than the caches on the Drive (January 2026). The unit numbers in their file names refer to different units in the current caches, and the units can't be identified from the panels, so `make_example_panels.py model` can't redraw those same units.
 
 ## Repository layout
 

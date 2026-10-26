@@ -9,9 +9,8 @@ Draws the joint tuning of single cells from the saved rate maps and activation c
   paper                             the place cell and head direction cell example panels of the manuscript
 
 NEURON is the index within the session's saved rate map (the N in the figure file names); UNIT is the
-index within the layer's activation cache. The ResNet example panels in the supplement were drawn from an
-8,000-unit subset that differs from the one in the current activation caches, so their unit numbers do
-not select the same units here. Figures go to figs/examples/ unless --out is given.
+index within the layer's activation cache. The ResNet example panels in the supplement were made from an
+earlier activation run than the current caches, and their unit numbers do not select the same units here. Figures go to figs/examples/ unless --out is given.
 
 Examples (from the repo root):
   python make_example_panels.py pfeiffer 2 133
