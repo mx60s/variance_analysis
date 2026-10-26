@@ -88,6 +88,7 @@ Opening the notebooks in Jupyter also works if you skip the setup cells at the t
 | `notebooks/binning_bias_fig.ipynb` | Simulations of the estimator and its finite-sampling floor: `smoothed_binning_fig_corr.pdf`, `binning_noise_floor_sweep.*` |
 | `notebooks/marginals_example.ipynb`, `notebooks/glm.ipynb` | Motivating examples for marginal tuning and GLMs: `fig2.pdf`, `glm*.pdf` |
 | `make_method_figure.py`, `make_decoding_figure.py` | Schematics: `method_schematic.*`, `decoding_schematic.*` |
+| `make_example_panels.py` | Example-cell panels (joint location × HD and HD × MD maps of single cells, or of single network units). `python make_example_panels.py paper` redraws the place cell and HD cell examples of the manuscript into `figs/examples/`. |
 
 The rate-map builders and decoders are in `src/` (`pfeiffer_ratemaps.py`, `dusz_ratemaps.py`, `*_decode_solo.py`). Each can also be run from the command line; use `--help` for the options.
 
@@ -120,7 +121,7 @@ In the Duszkiewicz sessions, HD and movement direction are only weakly coupled. 
 
 ## Known gaps
 
-- Some manuscript panels have no generating code in the repo: `pfeiffer_example_*`, `dusz_example_*`, `dusz_hdmd_*_joint.pdf` and `resnet50_layer*_N*.pdf`.
+- The ResNet example panels in the supplement (`resnet50_layer*_N*.pdf`) were drawn from a different 8,000-unit subset than the one in the current activation caches, so `make_example_panels.py model` can't redraw those same units.
 
 ## Repository layout
 

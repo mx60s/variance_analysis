@@ -14,7 +14,7 @@ dependencies = [
     "numba",
     "joblib",
     "matplotlib",
-    "plotly",
+    "plotly<6",  # kaleido 0.2.1 only works with plotly 5
     "kaleido==0.2.1",
     "tqdm",
     "scikit-learn",
