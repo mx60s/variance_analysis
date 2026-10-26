@@ -295,8 +295,8 @@ def get_activations(
 
         if out.shape[1] > max_units:
             if selected_idx is None:
-                g = torch.Generator(device=out.device).manual_seed(sample_seed)
-                selected_idx = torch.randperm(out.shape[1], generator=g, device=out.device)[:max_units]
+                g = torch.Generator().manual_seed(sample_seed)  # CPU generator, so the same units are picked on any device
+                selected_idx = torch.randperm(out.shape[1], generator=g)[:max_units].to(out.device)
             out = out.index_select(1, selected_idx)
 
         bufs.append(out.detach().cpu().numpy())

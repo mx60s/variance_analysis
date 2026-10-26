@@ -65,6 +65,8 @@ Generated files go to `results/` (rate maps, EV values, decoding output) and `da
 
 The rate-map builders split each bin's samples into the two folds at random, with a fixed seed (`seed=0`), so a rerun gives identical results.
 
+For network layers with more than 8,000 units, the activation code keeps a random subset of 8,000 units. The cached activations on the Drive were made on a CUDA GPU in Colab, where that subset came out differently from the one behind the paper's figures, because PyTorch's seeded random numbers differ between devices. The scatters therefore show different individual units but the same distribution. The code now draws the subset on the CPU, so new runs pick the same units on any machine. That subset is different again from both of those, so delete a layer's cache and rerun it if you need it to match the code exactly.
+
 ## Running
 
 The notebooks were written in Google Colab, so their first cells mount Google Drive and install packages. To run one locally without Jupyter, use `notebooks/run_nb.py`. It skips the Colab cells, runs from the repo root and uses MPS instead of CUDA:
