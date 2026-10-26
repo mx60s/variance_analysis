@@ -84,6 +84,7 @@ Opening the notebooks in Jupyter also works if you skip the setup cells at the t
 | `notebooks/model_neurons.ipynb` | Network activations on the panoramas, unit classification, EV per layer: `*_ev_pitch.pdf`, `predictive_coder_conv1_filters.pdf` |
 | `notebooks/run_model_layers.py` | The same EV pipeline as a script, for batch runs: `EV_MODELS='{"resnet50":["layer3"]}' EV_DEVICE=mps python notebooks/run_model_layers.py` |
 | `notebooks/1d_decoding.ipynb` | Bayesian decoding of location, HD and MD vs chance: `*_decoding_vs_chance.pdf` |
+| `notebooks/rodent_summary.py` | Prints the rodent numbers quoted in the manuscript (EV fractions and medians, finite-sampling floors, HD–MD coupling, mean decoding errors) from `results/rodents/`. Run it after the two notebooks above. |
 | `notebooks/binning_bias_fig.ipynb` | Simulations of the estimator and its finite-sampling floor: `smoothed_binning_fig_corr.pdf`, `binning_noise_floor_sweep.*` |
 | `notebooks/marginals_example.ipynb`, `notebooks/glm.ipynb` | Motivating examples for marginal tuning and GLMs: `fig2.pdf`, `glm*.pdf` |
 | `make_method_figure.py`, `make_decoding_figure.py` | Schematics: `method_schematic.*`, `decoding_schematic.*` |
@@ -104,23 +105,22 @@ These are the numbers in the manuscript:
 
 - Place cells: EV_xy > EV_hd for 99% of cells (n = 551).
 - HD cells: EV_hd > EV_xy for 94% of cells (n = 1,489, 30 sessions).
-- HD vs MD: EV_hd > EV_md for 100% of cells (n = 1,489). The manuscript says n = 1,465 because session `A5506-200914a` was missing its tracking file when that analysis was run. It is included now.
+- HD vs MD: EV_hd > EV_md for 100% of cells (n = 1,489).
 - Trained network layers lie on the diagonal (EV_xy ≈ EV_hd ≈ 0.9). The untrained ResNet-50 is the exception.
 
-Some caveats on the place-cell HD result:
+Each EV comes with a finite-sampling floor, 1 − ⟨C_ii⟩: the value EV takes for a neuron that is invariant to that variable. Median floors and reliability-normalized contributions, (⟨C_ii⟩ − ⟨C_ij⟩)/⟨C_ii⟩, with the pipeline settings above:
 
-- At 60 HD bins, place cells have EV_hd ≈ 0.5, and most of that is sampling noise: per-bin reliability is only about 0.5.
-- With coarser bins (about 12) the noise drops, and a weak but real HD modulation remains (reliability-normalized EV ≈ 0.4).
-- Decoding agrees: HD can be decoded only slightly above chance.
-- So "predominantly spatial" is supported, but strict invariance to HD is not.
+- Place cells: EV_hd 0.49 with a floor of 0.19; normalized 0.37 for HD and 0.93 for location. So place fields keep their location across head directions, while their shape changes modestly with head direction.
+- HD cells: EV_xy 0.67 with a floor of 0.32; normalized 0.52 for location and 0.85 for HD.
+- HD vs MD: EV_md 0.18 with a floor of 0.04; normalized 0.14.
+
+The measure ignores gain changes, because Pearson correlation is invariant to scale and offset. Head-direction modulation of place-field peak rate therefore doesn't show up in EV_hd.
 
 In the Duszkiewicz sessions, HD and movement direction are only weakly coupled. The HD x MD joint map is therefore well populated, so EV_hd ≫ EV_md is not an artifact of sampling.
 
 ## Known gaps
 
-- Panel (j) of `Spatial_maps_in_CNNs/Figures/Fig_pred coder_ver2.pdf` still shows the old metric.
 - Some manuscript panels have no generating code in the repo: `pfeiffer_example_*`, `dusz_example_*`, `dusz_hdmd_*_joint.pdf` and `resnet50_layer*_N*.pdf`.
-- The manuscript still has `TODO(author)` comments: predictive coder MSE, place-cell inclusion criteria, repository URL.
 
 ## Repository layout
 
