@@ -5,13 +5,15 @@ Code and manuscript for **Invariance and selectivity to spatial variables in dee
 ## Paper and reproducibility
 
 - Current LaTeX and figures: [`Spatial_maps_in_CNNs/`](Spatial_maps_in_CNNs/).
-- [Public release: paper, Overleaf ZIP, and complete reproduction bundles](https://github.com/mx60s/variance_analysis/releases/tag/manuscript-2026-11-18).
+- [Public release: paper, Overleaf ZIP, and complete reproduction bundles](https://github.com/mx60s/variance_analysis/releases/tag/manuscript-2026-11-18-luo).
 - [Correlation-based alternate](alternatives/correlation/): earlier paper and an unchanged archived reproduction package.
 
-For the exact manuscript figures, download `variance_reproduction.zip` from the release. It contains the numerical inputs, source snapshots, figure/table manifests, and checksums. It does not contain raw recordings, large activation caches, or model checkpoints.
+The `manuscript-2026-11-18-luo` release contains the current source and figure-reproduction inputs. The earlier `manuscript-2026-11-18` release remains an immutable pre-Luo snapshot.
+
+For the current manuscript figures, download `variance_reproduction_luo.zip` from the release. It contains the numerical inputs, source snapshots, figure/table manifests, and checksums. It does not contain raw recordings, large activation caches, or model checkpoints.
 
 ```bash
-unzip variance_reproduction.zip
+unzip variance_reproduction_luo.zip
 cd figure_reproduction
 python -m pip install -r requirements-figures.txt numba
 python reproduce.py --verify-only
@@ -43,7 +45,7 @@ The correlation alternate remains available through `src.explained_variance.quan
 - CA1: published place-cell selection, 545 units; primary joint maps use approximately 10-cm spatial bins.
 - HD cells: dataset authors' labels, 1,489 units across 30 square-arena sessions; primary joint maps use 10 x 10 spatial bins and 4-degree headings.
 - MD: centered 200-ms local-linear velocity estimate, speed at least 5 cm/s, matched HD/MD decoder time bins. Neighboring windows, thresholds, and resolutions are reported.
-- ANN classification: iterative Tanni field hierarchy with ANN size/peak criteria, without heading-group stability in the primary selection (`tanni_iterative_no_stability`). Heading-group stability is a supplementary variant. Main pies combine place and border classifications; exclusive place subsets remain separate.
+- ANN classification: Luo's single spatial-mean threshold, eight-connected 10–144-bin fields (`luo`). Iterative Tanni field detection with and without heading-group stability is supplementary. Main pies combine place and border classifications; exclusive place subsets remain separate.
 - Models: pretrained ResNet-50 and VGG-16, an untrained ResNet-50 control, and a retrained predictive model with per-frame normalization preventing future-frame leakage. All are evaluated on the shared Minecraft panorama bank. Pitch folds compare responses across image perturbations rather than repeated stochastic measurements.
 - Decoders: held-out contiguous time folds, supported-state masking, and an occupancy-based baseline.
 

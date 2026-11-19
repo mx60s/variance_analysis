@@ -18,7 +18,7 @@ for a,inds,title in [(ax[0,1],[0,1,2],'b  Known HD-only responses'),(ax[1,0],[3,
   arr=np.concatenate([q[f'g{n}_estimate'][:,inds,:].reshape(-1,2) for q in z]);truth=np.concatenate([q[f'g{n}_noiseless'][inds,:] for q in z]);ref=np.concatenate([q[f'g{n}_full_grid'][inds,:] for q in z])
   est.append(np.median(arr,axis=0));noiseless.append(np.median(truth,axis=0));full.append(np.median(ref,axis=0))
  est,noiseless,full=np.array(est),np.array(noiseless),np.array(full)
- for j,col,name in [(0,'#0072b2','Location'),(1,'#e69f00','HD')]:
+ for j,col,name in [(0,'#e69f00','Location'),(1,'#0072b2','HD')]:
   a.plot(grids,est[:,j],'o-',c=col,label=name+' (Poisson)');a.plot(grids,noiseless[:,j],':',c=col,lw=2,label=name+' (noiseless)')
   a.plot(grids,full[:,j],'--',c=col,alpha=.65,label=name+' (full grid)')
  a.set(title=title,xlabel='Spatial bins per axis',ylabel='Median normalized variance',xticks=grids,ylim=(-.04,1.04))

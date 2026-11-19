@@ -194,6 +194,10 @@ def _compute_single_heatmap_fields_info_new(
 ):
     if not np.all(np.isfinite(heatmap)):
         raise ValueError("Classification requires finite activations")
+    if field_method == "luo":
+        shape = (env_x_max - env_x_min + 1, env_y_max - env_y_min + 1)
+        marginal = np.sum(heatmap, axis=1).reshape(shape)
+        return _compute_single_heatmap_fields_info_old(marginal, 10, int(marginal.size * 0.5))
     if np.ptp(heatmap) == 0:
         return tuple(np.array([0]) for _ in range(5))
     heatmap = (heatmap - np.min(heatmap)) / np.ptp(heatmap)

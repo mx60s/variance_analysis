@@ -56,19 +56,19 @@ for k in range(600):
  bias.append([components(ad,bd)['raw'][1]/cont_var,components(a,b)['raw'][1]/cont_var,components(gaussian_filter(a,1,mode='nearest'),gaussian_filter(b,1,mode='nearest'))['raw'][1]/cont_var])
 bias=np.array(bias)
 fig,axs=plt.subplots(1,3,figsize=(11,3.5),layout='constrained')
-axs[0].plot(np.linspace(0,1,500),rate(np.linspace(0,1,500)));axs[0].set(xlabel='Continuous x',ylabel='Expected rate',title='a  True response depends only on x')
+axs[0].plot(np.linspace(0,1,500),rate(np.linspace(0,1,500)));axs[0].set(xlabel='Continuous x',ylabel='Expected rate',title='a  Response')
 im=axs[1].imshow((binned-discrete).T,origin='lower',cmap='coolwarm',vmin=-np.max(abs(binned-discrete)),vmax=np.max(abs(binned-discrete)),extent=[0,1,0,1]);axs[1].set(xlabel='x bin',ylabel='y bin',title='b  Within-bin sampling effect');fig.colorbar(im,ax=axs[1],shrink=.7,label='Rate difference')
 for j,(label,c) in enumerate(zip(['Discrete control','Continuous, binned','Continuous, smoothed'],['#0072b2','#d55e00','#009e73'])):
  axs[2].hist(bias[:,j],bins=35,alpha=.45,color=c,label=label);axs[2].axvline(targets[j],color=c,ls='--')
-axs[2].axvline(0,color='black',lw=.8);axs[2].set(xlabel='Estimated y variance / true total variance',ylabel='Datasets',title='c  Smoothing mitigates this artifact');axs[2].legend(fontsize=7)
+axs[2].axvline(0,color='black',lw=.8);axs[2].set(xlabel='Estimated y variance / true total variance',ylabel='Datasets',title='c  Conditional variance');axs[2].legend(fontsize=7)
 save(fig,'binning_bias')
 report={'validation':validation,'sample_counts':ns,'sampling_means':means.tolist(),'sampling_sd':sd.tolist(),'binning':{'targets':targets.tolist(),'means':bias.mean(0).tolist(),'sd':bias.std(0).tolist(),'repetitions':600,'bins':20,'observations_per_fold_bin':20,'smoothing_sigma':1,'target':'numerator divided by known continuous signal variance; true continuous y effect is zero'}}
 (OUT/'variance_simulations.json').write_text(json.dumps(report,indent=2))
 # Schematic describes operation rather than reusing correlation matrices.
 fig,axs=plt.subplots(1,3,figsize=(10,2.8),layout='constrained')
 f=rate(x)*(1+.6*np.sin(2*np.pi*y));center=f-f.mean(0,keepdims=True)
-for ax,a,title in zip(axs[:2],[f,center],['a  Fold map: response f(x,y)','b  Subtract mean over x at each y']):
- im=ax.imshow(a.T,origin='lower',cmap='viridis' if ax is axs[0] else 'coolwarm');ax.set(title=title,xlabel='x bin',ylabel='y bin');fig.colorbar(im,ax=ax,shrink=.7)
-axs[2].axis('off');axs[2].text(.03,.8,'c  Multiply centered maps across folds',fontsize=11);axs[2].text(.04,.55,r'$\widehat V_x=\langle(f_0-\bar f_{0,x})(f_1-\bar f_{1,x})\rangle$',fontsize=12);axs[2].text(.04,.27,'Average over supported joint bins.\nNormalize both axes by the same\ncross-fold total signal variance.',fontsize=10)
+for ax,a,title in zip(axs[:2],[f,center],['a  Fold map','b  Centered fold map']):
+ im=ax.imshow(a.T,origin='lower',cmap='viridis' if ax is axs[0] else 'coolwarm', **({} if ax is axs[0] else {'vmin':-np.max(abs(a)), 'vmax':np.max(abs(a))}));ax.set(title=title,xlabel='x bin',ylabel='y bin');fig.colorbar(im,ax=ax,shrink=.7)
+axs[2].axis('off');axs[2].text(.03,.8,'c  Cross-fold product',fontsize=11);axs[2].text(.04,.55,r'$\widehat V_x=\langle(f_0-\bar f_{0,x})(f_1-\bar f_{1,x})\rangle$',fontsize=12)
 save(fig,'method_schematic')
 print(json.dumps(report['binning'],indent=2))

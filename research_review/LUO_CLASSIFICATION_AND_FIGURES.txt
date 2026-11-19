@@ -1,0 +1,7 @@
+Luo primary detector: one threshold at the 8-bit marginal map mean, eight-connected components, 10–144 bins, at least one field. No iterative threshold search or heading-stability filter. Other classification criteria and all EV values are unchanged.
+
+Exclusive place counts: predictive pre 6713 -> 5274; post 6883 -> 5545; untrained ResNet avgpool 1968 -> 204. The untrained selected subset median location/HD scores are 0.868/0.905. All existing paper example units remain eligible.
+
+158 nonconstant cached gallery maps match Luo upstream field counts, areas and field statistics at Space commit 7a9028e09cd07e9b88c73dd8fcc43b2e3aab5b7f. 39 tests and 3 subtests pass. The current editor source compiles.
+
+Figures: no insets or explanatory banners; plain n labels; decoder bars without session connectors; viridis response maps. Signed centered/difference maps use symmetric diverging scales. Display-only scatter exclusions use per-axis 0.5th–99.5th percentiles expanded to include [0,1]. Scientific summaries retain all finite scores.

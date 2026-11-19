@@ -185,10 +185,10 @@ def analyze_layer(name, layer, commit=lambda: None):
     cache = Path("/tmp") / (layer + "_clean.npz")
     if not (d / "classifications.json").exists():
         np.savez(cache, activations=clean, locations=locations)
-        classify(cache, name, layer, d, field_method="tanni_iterative_no_stability")
+        classify(cache, name, layer, d, field_method="luo")
         cache.unlink()
     policy = json.loads((d / "summary.json").read_text()).get("policy", "")
-    if not policy.startswith("tanni_iterative_no_stability"):
+    if not policy.startswith("luo"):
         raise ValueError("Existing classification cache uses an earlier method. Reclassify into a fresh output directory with the iterative procedure before resuming.")
     groups = json.loads((d / "classifications.json").read_text())
     rng = np.random.default_rng(20261116 + LAYERS[name].index(layer))

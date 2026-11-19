@@ -8,10 +8,6 @@ def build(root,out,scatter):
  ev=np.concatenate([np.load(f)['ev'] for f in sorted((root/'outputs/md_revision/sessions').glob('dusz_*/w200_s5.npz'))])
  fig,axs=plt.subplots(1,3,figsize=(11,3.6),layout='constrained')
  scatter(axs[0],ev[:,::-1],'a  HD versus MD','MD','HD')
- for inset in axs[0].child_axes:
-  inset.set_axes_locator(None)
-  inset.set_position(axs[0].get_position())
-  inset.set_axes_locator(lambda a,r: __import__('matplotlib').transforms.TransformedBbox(__import__('matplotlib').transforms.Bbox.from_bounds(.55,.12,.35,.35),axs[0].transAxes + fig.transFigure.inverted()))
  c=s['behavior'];e=np.array(c['angular_bin_edges']);h=np.array(c['angular_histogram_counts'])
  axs[1].bar((e[:-1]+e[1:])/2,h/h.sum()*100,width=10,color='#446e91')
  axs[1].set(xlabel='HD − MD (degrees)',ylabel='Time bins (%)',title='b  Behavioral coupling')
@@ -19,7 +15,6 @@ def build(root,out,scatter):
  for i,axis in enumerate(['hd','md']):
   d=p['decoding'][axis];x=np.array([0,1])+i*2.6
   axs[2].bar(x,[d['median'],d['baseline']],color=['#0072b2','#e69f00'],width=.75)
-  for m in d['session_medians']:axs[2].plot(x,m,'o-',c='.3',alpha=.25,ms=1.8,lw=.5)
  axs[2].set(xticks=[0,1,2.6,3.6],xticklabels=['HD\nNeural','HD\nOcc-based','MD\nNeural','MD\nOcc-based'],ylabel='Median error (degrees)',title='c  Matched decoding')
  axs[2].tick_params(axis='x',labelsize=8)
  for ext in ['pdf','png']:fig.savefig(out/('md_summary.'+ext),dpi=180)
@@ -31,7 +26,7 @@ def build(root,out,scatter):
   ax[0,0].plot(speeds,[r['median'][1] for r in rows],'s--',color=col,label=f'{w} ms: MD')
   ax[0,1].plot(speeds,[100*r['hd_greater'] for r in rows],'o-',color=col,label=f'{w} ms')
  ax[0,0].set(title='a  Conditional response variance',ylabel='Median normalized score',xlabel='Minimum speed (cm/s)');ax[0,0].legend(fontsize=8,ncol=2)
- ax[0,1].set(title='b  HD preference persists',ylabel='Defined cells with HD > MD (%)',xlabel='Minimum speed (cm/s)',ylim=(97,100.3));ax[0,1].legend(fontsize=8)
+ ax[0,1].set(title='b  HD preference',ylabel='Defined cells with HD > MD (%)',xlabel='Minimum speed (cm/s)',ylim=(97,100.3));ax[0,1].legend(fontsize=8)
  for axis,col in [('hd','#0072b2'),('md','#d55e00')]:
   ax[1,0].plot(speeds,[v[f'w200_s{x}']['decoding'][axis]['median'] for x in speeds],'o-',color=col,label=axis.upper())
  ax[1,0].set(title='c  Speed selection (200 ms)',ylabel='Median decoding error (degrees)',xlabel='Minimum speed (cm/s)');ax[1,0].legend()

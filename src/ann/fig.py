@@ -134,7 +134,7 @@ def plot_neuron_2d_3d(
     *,
     n_slices: int = 4,
     z_spacing: float = 1.5,
-    cmap: str = "Jet",
+    cmap: str = "Viridis",
     surf_opacity: float = 0.9,
     grid_color: str = "black",
     grid_width: float = 1,
@@ -173,9 +173,9 @@ def plot_neuron_2d_3d(
         specs=[[{"type": "scene"}, {"type": "heatmap"}, {"type": "heatmap"}]],
         horizontal_spacing=hspace,
         subplot_titles=(
-            f"3D heatmap ({axes_names[0]}, {axes_names[1]}, {axes_names[2]})",
-            f"Marginal across {axes_names[2]}",
-            f"Slices conditioned on {axes_names[2]}"
+            "Joint map",
+            f"Mean over {axes_names[2]}",
+            f"{axes_names[2]} sectors"
         ),
     )
 

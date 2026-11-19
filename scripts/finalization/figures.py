@@ -61,49 +61,28 @@ def save(fig, out, name):
     plt.close(fig)
 
 
+PLOT_AUDIT = {}
+
 def scatter(ax, ev, title, x="Location", y="HD", place=None):
     good = np.isfinite(ev).all(1)
     a = ev[good]
-    ax.scatter(a[:, 0], a[:, 1], s=3, c="#446e91", alpha=0.22, rasterized=True)
+    # Display-only tail exclusion; scientific summaries retain every finite score.
+    qlow, qhigh = np.quantile(a, [.005, .995], axis=0)
+    lower = np.minimum(qlow, 0.)
+    upper = np.maximum(qhigh, 1.)
+    show = good & np.all((ev >= lower) & (ev <= upper), axis=1)
+    shown = ev[show]
+    ax.scatter(shown[:, 0], shown[:, 1], s=3, c="#446e91", alpha=.22, rasterized=True)
     if place is not None:
-        b = ev[place]
-        ax.scatter(
-            b[:, 0],
-            b[:, 1],
-            s=5,
-            c="#c43a35",
-            alpha=0.45,
-            rasterized=True,
-            label="Place only",
-        )
-    lo = min(-0.05, float(np.floor(a.min()*10)/10)-0.05)
-    hi = max(1.25, float(np.ceil(a.max()*10)/10)+0.05)
-    assert ((a >= lo) & (a <= hi)).all()
-    ax.plot([lo, hi], [lo, hi], "--", c=".35", lw=0.7)
-    ax.set(
-        xlim=(max(lo,-.15), min(hi,1.25)),
-        ylim=(max(lo,-.15), min(hi,1.25)),
-        xlabel=f"Normalized variance ({x})",
-        ylabel=f"Normalized variance ({y})",
-        title=title,
-    )
-    ax.set_aspect("equal")
-    outside = ((a < -.15) | (a > 1.25)).any(1)
-    if outside.any():
-        inset = ax.inset_axes([.08,.50,.35,.35])
-        inset.scatter(a[:,0],a[:,1],s=2,c="#446e91",alpha=.4,rasterized=True)
-        inset.plot([lo,hi],[lo,hi],"--",c=".4",lw=.5)
-        inset.set(xlim=(lo,hi),ylim=(lo,hi),title="Full range")
-        inset.tick_params(labelsize=6);inset.title.set_fontsize(7)
-        ax.text(.03,.04,f"{outside.sum()} outside main view; all in inset",transform=ax.transAxes,fontsize=6)
-    ax.text(
-        0.03,
-        0.98,
-        f"n = {len(a):,} finite / {len(ev):,}",
-        transform=ax.transAxes,
-        va="top",
-        fontsize=8,
-    )
+        ix = np.asarray(place, dtype=int); b = ev[ix[show[ix]]]
+        ax.scatter(b[:,0], b[:,1], s=5, c="#c43a35", alpha=.45, rasterized=True)
+    lo = min(0., float(shown.min())); hi = max(1., float(shown.max()))
+    pad = .04*(hi-lo); lo -= pad; hi += pad
+    ax.plot([lo,hi], [lo,hi], '--', c='.35', lw=.7)
+    ax.set(xlim=(lo,hi), ylim=(lo,hi), xlabel=f"Normalized variance ({x})", ylabel=f"Normalized variance ({y})", title=title)
+    ax.set_aspect('equal')
+    ax.text(.03,.98,f"n = {int(show.sum())}",transform=ax.transAxes,va='top',fontsize=8)
+    PLOT_AUDIT[title] = dict(n_total=len(ev), n_defined=int(good.sum()), n_plotted=int(show.sum()), excluded_indices=np.flatnonzero(good & ~show).tolist(), rule="0.5th–99.5th percentile per axis, expanded to include [0,1]; display only")
 
 
 def categories(path):
@@ -156,7 +135,7 @@ def models(base, out):
             textprops={"fontsize": 9},
             wedgeprops={"edgecolor": "white"},
         )
-        ax.set_title(title + f" (n={v.sum():,})")
+        ax.set_title(title + f" (n = {v.sum()})")
         ax.legend(
             wedges,
             ["Location only", "Location + HD", "HD only", "Other active", "Inactive"],
@@ -253,7 +232,7 @@ def models(base, out):
                 textprops={"fontsize": 11},
                 wedgeprops={"edgecolor": "white"},
             )
-            axs[1, col].set_title(f"All {sum(broad):,} units", fontsize=10)
+            axs[1, col].set_title(f"n = {sum(broad)}", fontsize=10)
         fig.legend(
             wedges,
             ["Location only", "Location + HD", "HD only", "Other active", "Inactive"],
@@ -281,7 +260,7 @@ def render3d(a, out, name, title, biological):
         0,
         axes_names=("X", "Y" if biological else "Z", "HD"),
         n_slices=4,
-        cmap="Jet",
+        cmap="Viridis",
         z_spacing=1.0,
         grid_color="white",
         fig_size=(1500, 620),
@@ -295,7 +274,7 @@ def render3d(a, out, name, title, biological):
         f.data[1].update(coloraxis="coloraxis2", zmin=0, zmax=peak)
         f.update_layout(
             coloraxis2=dict(
-                colorscale="Jet",
+                colorscale="Viridis",
                 cmin=0,
                 cmax=peak,
                 colorbar=dict(
@@ -382,8 +361,6 @@ def biology(base, out):
                 np.nanmedian(np.concatenate(bases)),
             ]
             ax.bar([0, 1], pooled, color=["#0072b2", "#e69f00"], width=0.6)
-            for v in meds:
-                ax.plot([0, 1], v, "o-", c=".3", alpha=0.3, lw=0.6, ms=2)
             ax.set(
                 xticks=[0, 1],
                 xticklabels=["Neural", "Occ-based"],
@@ -429,7 +406,7 @@ def marginal(out):
         density = np.exp(
             -(xx**2 - 2 * rho * xx * yy + yy**2) / (2 * (1 - rho * rho))
         ) / (2 * np.pi * np.sqrt(1 - rho * rho))
-        axs[0, col].imshow(density, origin="lower", extent=[-3, 3, -3, 3], cmap="jet")
+        axs[0, col].imshow(density, origin="lower", extent=[-3, 3, -3, 3], cmap="viridis")
         axs[0, col].set(title=f"Sampling correlation ρ = {rho}", xlabel="x", ylabel="y")
         marginal = (
             sig
@@ -441,7 +418,7 @@ def marginal(out):
             xlabel="y",
             ylabel="E[h(X,Y) | Y=y]",
             ylim=(0, 1),
-            title="Observed marginal tuning",
+            title="Marginal tuning",
         )
     save(fig, out, "marginal_confound")
 
@@ -462,3 +439,4 @@ if __name__ == "__main__":
     ]:
         if a.part in ["all", name]:
             fn(a.outputs, out)
+    (out / "scatter_display.json").write_text(json.dumps(PLOT_AUDIT, indent=2))

@@ -29,7 +29,7 @@ def sha256(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
-def classify(path, model, layer, output, compare_ref=None, field_method="adapted"):
+def classify(path, model, layer, output, compare_ref=None, field_method="luo"):
     with np.load(path) as z:
         acts, locations = z["activations"], z["locations"]
     xs, ys = np.unique(locations[:, 0]), np.unique(locations[:, 1])
@@ -222,7 +222,7 @@ def main():
     ap.add_argument("--model", default="predictive_coder")
     ap.add_argument("--compare-ref")
     ap.add_argument(
-        "--field-method", choices=["adapted", "tanni_iterative", "tanni_iterative_no_stability"], default="adapted"
+        "--field-method", choices=["luo", "adapted", "tanni_iterative", "tanni_iterative_no_stability"], default="luo"
     )
     a = ap.parse_args()
     a.output.mkdir(parents=True, exist_ok=True)

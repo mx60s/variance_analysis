@@ -124,10 +124,6 @@ def main(out):
         axs[row, 0].text(
             -0.25, 1.1, f"{theta}°", transform=axs[row, 0].transAxes, fontsize=14
         )
-    fig.suptitle(
-        "Marginals can look correct while joint tuning is wrong; an interaction term recovers it",
-        fontsize=13,
-    )
     fig.savefig(out / "glm_corrected.png", dpi=160)
     fig.savefig(out / "glm_corrected.pdf")
     (out / "glm_validation.json").write_text(json.dumps(summaries, indent=2))
