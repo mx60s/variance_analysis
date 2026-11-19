@@ -1,3 +1,4 @@
+from src.explained_variance import smooth_location_hd
 #!/usr/bin/env python
 """
 Standalone runner for the deep-net EV pipeline (Task 1), reusing model_neurons.ipynb's
@@ -74,8 +75,8 @@ def get_splits_deterministic(visits, f0i, f1i):
     return fold0, fold1, np.full((s1, s2), len(f0i), float), np.full((s1, s2), len(f1i), float)
 
 def process_neuron_loop(n, fold0, fold1, occ, zoom_factor, sigma):
-    f0 = nan_aware_gaussian_filter(fold0[:, :, n], sigma=sigma, circular_axes=(1,))
-    f1 = nan_aware_gaussian_filter(fold1[:, :, n], sigma=sigma, circular_axes=(1,))
+    f0 = smooth_location_hd(fold0[:, :, n], sigma)
+    f1 = smooth_location_hd(fold1[:, :, n], sigma)
     f0 = masked_zoom(f0, zoom_factor=zoom_factor); f1 = masked_zoom(f1, zoom_factor=zoom_factor)
     occ_z = masked_zoom(occ, zoom_factor=zoom_factor)
     ev_xy = 1 - quantify_variance_corr(f0, f1, occ_z, axis=0)[0]
@@ -133,7 +134,7 @@ def run_layer(model_name, layer_name):
     cfg = {"model_name": model_name, "output_layer": layer_name,
            "env_bounds": [ENV_X_MIN, ENV_X_MAX, ENV_Y_MIN, ENV_Y_MAX], "n_rotations": N_HD_PANORAMA}
     scores_fp, _ = score_neurons([flat_p], cfg, base_dir=current_file_path, sample_partial=False,
-                                 pixel_min_threshold=1, use_old_place_method=False, n_visits=1)
+                                 pixel_min_threshold=15, use_old_place_method=False, n_visits=1)
     chart = np.load(scores_fp, allow_pickle=True)
     classes = classify_neurons(chart)
     place = np.asarray(classes["exclusive_place_cells_indices"])

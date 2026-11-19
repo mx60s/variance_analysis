@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from tqdm.auto import tqdm
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -128,13 +129,16 @@ def score_neurons(
         sample_partial=False,
         use_old_place_method=True,
         pixel_min_threshold = 20,
-        base_dir='/',
-        n_visits=0
+        base_dir='.',
+        n_visits=0,
+        output_dir=None,
+        field_method="adapted",
     ):
     """
     Score each individual neuron with information about place field stability etc.
     """
     
+    base_dir = Path(base_dir)
     env_x_min, env_x_max, env_y_min, env_y_max = config['env_bounds']
     n_rotations = config['n_rotations']
 
@@ -145,12 +149,16 @@ def score_neurons(
 
     model_reps = np.concatenate(model_reps)
 
-    if n_visits > 0:
-        xy_shape = env_x_max - env_x_min + 1
-        model_reps = model_reps.reshape(xy_shape, xy_shape, n_rotations, n_visits, -1)
+    if model_reps.ndim == 3 and n_visits in (0, 1):
+        if model_reps.shape[1] != n_rotations:
+            raise ValueError("Activation HD axis does not match n_rotations")
+        n_neurons = model_reps.shape[-1]
+    elif n_visits > 0:
+        nx, ny = env_x_max - env_x_min + 1, env_y_max - env_y_min + 1
+        model_reps = model_reps.reshape(nx, ny, n_rotations, n_visits, -1)
         model_reps = model_reps.mean(axis=3)
-        n_neurons = model_reps.shape[3]
-        model_reps = model_reps.reshape(xy_shape * xy_shape, n_rotations, n_neurons)
+        n_neurons = model_reps.shape[-1]
+        model_reps = model_reps.reshape(nx * ny, n_rotations, n_neurons)
     else:
         n_neurons = model_reps.shape[1]
         model_reps = np.reshape(model_reps, 
@@ -163,15 +171,17 @@ def score_neurons(
     results_path = (
         base_dir / "data/ann_activations" / f"{model_name}_{output_layer}"
     )
+    if output_dir is not None:
+        results_path = Path(output_dir)
     results_path.mkdir(parents=True, exist_ok=True)
 
     sample_path = None
     if sample_partial:
         print("Sample partial")
-        np.random.seed(random_seed)
+        rng = np.random.RandomState(random_seed)
 
         if n_neurons > 8000:
-            sampled_indices = np.random.choice(n_neurons, 8000, replace=False)
+            sampled_indices = rng.choice(n_neurons, 8000, replace=False)
             model_reps = model_reps[:, :, sampled_indices]
             print(f'Sampled 8000 neurons out of {n_neurons}')
 
@@ -182,6 +192,10 @@ def score_neurons(
         else:
             print(f'Less than 8000 neurons ({n_neurons}), using all neurons')
         
+    n_neurons = model_reps.shape[-1]
+    if not np.all(np.isfinite(model_reps)):
+        raise ValueError("Classification requires finite activations")
+
     # ken: vit uses gelu, unfortunately, it produces negative values
     # in model_reps which messes up border and direction scores (led to huge scores),
     # a workaround is to relu the model_reps.
@@ -265,7 +279,8 @@ def score_neurons(
                 mean_value_in_clusters, var_value_in_clusters = \
                     _compute_single_heatmap_fields_info(
                         *args,
-                        use_old_place_method=use_old_place_method
+                        use_old_place_method=use_old_place_method,
+                        **({} if use_old_place_method else {"field_method": field_method}),
                         )
                     
             neuron_chart_info[neuron_index, 1] = num_clusters

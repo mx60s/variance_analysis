@@ -1,115 +1,77 @@
-# Place Cell Variance Analysis
+# Invariance and selectivity in neural responses
 
-Code for the manuscript *Invariance and selectivity to spatial variables in deep neural networks and the brain* (source in `Spatial_maps_in_CNNs/`).
+Code and manuscript for **Invariance and selectivity to spatial variables in deep neural networks and the brain**. The primary analysis measures conditional response variance in CA1 place cells, postsubicular head-direction cells, and vision-model units.
 
-The project asks how much each stimulus variable (location, head direction, movement direction) contributes to a neuron's firing, without assuming the variables act independently. Marginal tuning curves and additive GLMs can mislead when variables are sampled together; `notes_marginals_and_glm.md` explains why. The method builds a joint rate map from two independent halves of the data (folds). For a variable *x*, it then measures how similar the tuning to the other variables stays as *x* changes, using cross-fold Pearson correlations.
+## Paper and reproducibility
 
-The same analysis is applied to:
+- Current LaTeX and figures: [`Spatial_maps_in_CNNs/`](Spatial_maps_in_CNNs/).
+- [Public release: paper, Overleaf ZIP, and complete reproduction bundles](https://github.com/mx60s/variance_analysis/releases/tag/manuscript-2026-11-18).
+- [Correlation-based alternate](alternatives/correlation/): earlier paper and an unchanged archived reproduction package.
 
-- place cells from rat CA1 (Pfeiffer & Foster 2013)
-- head-direction cells from mouse postsubiculum (Duszkiewicz et al. 2024)
-- units in deep networks (ResNet-50, VGG16 and a predictive-coding network) shown first-person views from a Minecraft environment
+For the exact manuscript figures, download `variance_reproduction.zip` from the release. It contains the numerical inputs, source snapshots, figure/table manifests, and checksums. It does not contain raw recordings, large activation caches, or model checkpoints.
 
-## The metric
-
-For a variable *x*, EV(*x*) = 1 − ⟨C_ij⟩ over i ≠ j. Here C_ij is the Pearson correlation between the fold-0 rate map at value *i* of *x* and the fold-1 rate map at value *j*. EV is roughly in [0, 1] and can go slightly above 1 when the off-diagonal correlations are negative.
-
-`src/explained_variance.py:quantify_variance_corr(fold0, fold1, occupancy, axis)` returns the **raw** mean off-diagonal correlation, plus the mean diagonal (same-value) correlation, which measures reliability. Callers apply `1 −` themselves:
-
-```python
-ev_xy = 1 - quantify_variance_corr(fold0, fold1, occ, axis=0)[0]   # location
-ev_hd = 1 - quantify_variance_corr(fold0, fold1, occ, axis=1)[0]   # head direction
+```bash
+unzip variance_reproduction.zip
+cd figure_reproduction
+python -m pip install -r requirements-figures.txt numba
+python reproduce.py --verify-only
+python reproduce.py --compile  # Tectonic must be on PATH
 ```
 
-Rate maps are laid out with axis 0 = location and axis 1 = head direction, for both biological and model data. Before September 2026 the code used an unbounded sum-of-squares estimator. Any figure whose axes run to 1e4–1e7 is from that version and is out of date.
+The source snapshot inside that archive is the authoritative complete figure-reproduction environment. Repository scripts also include raw-data analysis and training tools; some require external datasets, activation caches, or remote storage. Their paths and dependencies are documented in the scripts and archive README.
 
-## Installation
+For Overleaf, upload `overleaf_variance.zip` from the release as a new project and select `manuscript.tex` as the main document. Use pdfLaTeX with BibTeX. The supplement is included in the same source.
 
-Python 3.12.
+## Primary metric
+
+For a joint response map `f(x, y)`, the contribution of x is `E_y Var_x[f(x,y)]`: response variation across x while y is held fixed. We estimate it by multiplying centered maps across folds and averaging over common supported bins. Both axes are normalized by the same cross-fold total signal variance.
+
+The implementation is [`scripts/finalization/variance_estimator.py`](scripts/finalization/variance_estimator.py):
+
+```python
+from scripts.finalization.variance_estimator import components
+result = components(fold0, fold1)  # matching 2-D maps; missing bins may be NaN
+location_ev, heading_ev = result["normalized"]
+```
+
+Interactions contribute to both axes; the scores need not sum to one. The unnormalized estimator is unbiased for its target map under fixed common support/weights and unbiased fold maps with independent zero-mean errors. Normalized ratios are not guaranteed unbiased. Binning, smoothing, and missing coverage define the target; correction for noise does not eliminate within-bin sampling bias. Biological unnormalized values have units of Hz squared; normalized values are dimensionless.
+
+The correlation alternate remains available through `src.explained_variance.quantify_variance_corr`; existing correlation workflows are retained and should not be mistaken for the primary variance analysis.
+
+## Current analysis choices
+
+- CA1: published place-cell selection, 545 units; primary joint maps use approximately 10-cm spatial bins.
+- HD cells: dataset authors' labels, 1,489 units across 30 square-arena sessions; primary joint maps use 10 x 10 spatial bins and 4-degree headings.
+- MD: centered 200-ms local-linear velocity estimate, speed at least 5 cm/s, matched HD/MD decoder time bins. Neighboring windows, thresholds, and resolutions are reported.
+- ANN classification: iterative Tanni field hierarchy with ANN size/peak criteria, without heading-group stability in the primary selection (`tanni_iterative_no_stability`). Heading-group stability is a supplementary variant. Main pies combine place and border classifications; exclusive place subsets remain separate.
+- Models: pretrained ResNet-50 and VGG-16, an untrained ResNet-50 control, and a retrained predictive model with per-frame normalization preventing future-frame leakage. All are evaluated on the shared Minecraft panorama bank. Pitch folds compare responses across image perturbations rather than repeated stochastic measurements.
+- Decoders: held-out contiguous time folds, supported-state masking, and an occupancy-based baseline.
+
+## Installation and checks
+
+Python 3.12 is used for the analysis environment.
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e .            # rodent analyses
-pip install -e ".[ann]"     # plus the deep-network analyses (torch etc.)
+pip install -e .
+pip install -e '.[ann,curated]'  # model and curated-recording dependencies
+pip install pytest
+python -m pytest tests -q
+python scripts/finalization/test_estimator.py
 ```
 
-On a CUDA machine you can also install `xformers`. `src/ann/predictive_coder.py` falls back to PyTorch attention when it isn't installed, which is the case on Apple Silicon.
+`remote/` contains optional Modal workflows; use a configured account only when intentionally starting remote work. `PredictiveCoder(..., causal_normalization=False)` preserves historical checkpoint behavior. The causal-normalization architecture requires a matching retrained checkpoint.
 
-## Data
+## Data and source layout
 
-None of the data is in the repository. The shared Google Drive folder has exactly the files below; copy its `data/` folder into the repo root. Only these files are read:
+Pfeiffer and Foster recordings were supplied by the authors and are not redistributed. The public Duszkiewicz recordings use DANDI 000939, version 0.261016.2310; `scripts/fetch_curated_dusz.py` documents retrieval. The release bundles contain derived numerical inputs sufficient to reproduce the included figures, not the raw recordings. Large panorama banks, checkpoints, and activation caches are not included.
 
-```
-data/
-  rodents/
-    pfeiffer/
-      Rat1/Open1/{Position_Data.mat, Spike_Data.mat}     # also Rat2, Rat3, Rat4
-    dusz/
-      Dataset_metadata.xlsx
-      Dataset_1/<session>/Data/{BehavEpochs.mat, Tracking_data.csv, CellTypes.mat, SpikeData.mat, Velocity.mat}
-      Dataset_2/<session>/Data/...
-  minecraft/
-    panorama-90yaw/         loc_+X_+Y.npz, 289 files (17x17 grid), 90 headings at 0 pitch
-    panorama-90yaw-pitch/   loc_+X_+Y.npz, 289 files, 90 headings x 4 pitches
-  weights/
-    predictive_coder.ckpt
-```
+- `src/`: map processing, estimators, decoders, models, and classification.
+- `scripts/finalization/`: primary variance estimator, figures, simulations, and supplementary tables.
+- `scripts/ca1_selection/`, `scripts/md_revision/`, `scripts/grid_primary/`: selection, movement, coverage, and recovery analyses.
+- `scripts/iterative_classification/`: field-classification runner.
+- `tests/`: numerical and pipeline correctness tests.
+- `notebooks/`, older `figs/`, and `research_review/`: historical/exploratory workflows and audit records; the current manuscript uses `Spatial_maps_in_CNNs/final_figures/` and the release reproduction bundle.
 
-- **Pfeiffer & Foster 2013** (Nature 497:74–79): CA1 place cells from 4 rats navigating an open arena. The data aren't public; we got them directly from the authors' lab. Only the `Open1` session is used.
-- **Duszkiewicz et al. 2024** (Nat Neurosci 27:782–792): postsubiculum recordings in mice. The data is public; see the paper's data availability statement. Only Datasets 1 and 2 are used, and within them only the square-arena sessions, chosen from `Dataset_metadata.xlsx`.
-- **Minecraft panoramas**: first-person views recorded with the Malmo platform at every block of a 17x17 area. The recording script is not in this repository.
-- **Predictive coder checkpoint**: our own training of the architecture from Gornet & Thomson 2024 ([jgornet/predictive-coding-recovers-maps](https://github.com/jgornet/predictive-coding-recovers-maps)). The training code is not in this repository. `load_model` raises an error if the checkpoint is missing. ResNet-50 and VGG16 use the torchvision ImageNet weights, which download automatically.
-
-Generated files go to `results/` (rate maps, EV values, decoding output) and `data/ann_activations/` (cached network activations; the pitch set is about 3 GB per layer). The Drive folder includes the rodent `results/` and the activation caches for the layers in the paper. Everything there can be regenerated, but the network activations take a while.
-
-The rate-map builders split each bin's samples into the two folds at random, with a fixed seed (`seed=0`), so a rerun gives identical results.
-
-For network layers with more than 8,000 units, the activation code keeps a random subset of 8,000 units. PyTorch's seeded random numbers differ between devices (CPU and Apple MPS give different subsets for the same seed), so the code draws the subset on the CPU to pick the same units on any machine. The activation caches on the Drive were made before this change, and EV scatters computed from them show the same distribution as the paper's figures but different individual units (checked for ResNet-50 `layer3`). Delete a layer's cache and rerun it to get the subset the current code selects.
-
-## Running
-
-The notebooks were written in Google Colab, so their first cells mount Google Drive and install packages. To run one locally without Jupyter, use `notebooks/run_nb.py`. It skips the Colab cells, runs from the repo root and uses MPS instead of CUDA:
-
-```bash
-python notebooks/run_nb.py notebooks/bio_neurons.ipynb                 # whole notebook
-python notebooks/run_nb.py notebooks/bio_neurons.ipynb --only 15-20    # selected cells
-```
-
-Opening the notebooks in Jupyter also works if you skip the setup cells at the top. Each notebook also tries to install Helvetica from `fonts/Helvetica.ttc`, which isn't in the repo; `run_nb.py` substitutes DejaVu Sans.
-
-| What | Produces (in `figs/`) |
-|---|---|
-| `notebooks/bio_neurons.ipynb` | Rate maps and EV for the Pfeiffer place cells and the Duszkiewicz HD cells: `*_ev_total_best_fit-corr.pdf`, `hdmd_occupancy_*-corr.pdf` |
-| `notebooks/model_neurons.ipynb` | Network activations on the panoramas, unit classification, EV per layer: `*_ev_pitch.pdf`, `predictive_coder_conv1_filters.pdf` |
-| `notebooks/run_model_layers.py` | The same EV pipeline as a script, for batch runs: `EV_MODELS='{"resnet50":["layer3"]}' EV_DEVICE=mps python notebooks/run_model_layers.py` |
-| `notebooks/1d_decoding.ipynb` | Bayesian decoding of location, HD and MD vs chance: `*_decoding_vs_chance.pdf` |
-| `notebooks/rodent_summary.py` | Prints the rodent numbers quoted in the manuscript (EV fractions and medians, finite-sampling floors, HD–MD coupling, mean decoding errors) from `results/rodents/`. Run it after the two notebooks above. |
-| `notebooks/estimator_simulations.ipynb` | Simulations that validate the estimator and measure its finite-sampling floor: `estimator_validation.pdf`, `noise_floor_sweep.*` |
-| `notebooks/marginals_example.ipynb`, `notebooks/glm.ipynb` | Motivating examples for marginal tuning and GLMs: `fig2.pdf`, `glm*.pdf` |
-| `make_method_figure.py`, `make_decoding_figure.py` | Schematics: `method_schematic.*`, `decoding_schematic.*` |
-| `make_example_panels.py` | Example-cell panels (joint location × HD and HD × MD maps of single cells, or of single network units). `python make_example_panels.py paper` redraws the place cell and HD cell examples of the manuscript into `figs/examples/`. |
-
-The rate-map builders and decoders are in `src/` (`pfeiffer_ratemaps.py`, `dusz_ratemaps.py`, `*_decode_solo.py`). Each can also be run from the command line; use `--help` for the options.
-
-## Rate-map parameters
-
-The results only reproduce with these settings. Don't change them without rechecking the HD-cell scatter.
-
-- **Pfeiffer, location x HD:** 20x20 location bins, 60 HD bins, tau = 0.25 s, speed > 5 cm/s, occupancy floor 5. Smoothed with σ = (1, 2), wrapping only the HD axis.
-- **Duszkiewicz, location x HD:** 20x20 location bins, 90 HD bins, `vel_threshold=2`, `floor=5`. A higher floor (e.g. 10) mostly keeps stationary periods, which makes HD cells look location-tuned.
-- **Duszkiewicz, HD x MD:** 90 x 90 bins, `vel_threshold=1`, `floor=10`. Both axes are circular.
-
-## Known gaps
-
-- The ResNet example panels in the supplement (`resnet50_layer*_N*.pdf`) were made in November 2025 from an earlier activation run than the caches on the Drive (January 2026). The unit numbers in their file names refer to different units in the current caches, and the units can't be identified from the panels, so `make_example_panels.py model` can't redraw those same units.
-
-## Repository layout
-
-```
-src/                  estimator, rate-map builders, decoders; src/ann/ for model loading and unit classification
-notebooks/            analysis notebooks and the two runner scripts
-figs/                 figures used in the manuscript and their current siblings
-Spatial_maps_in_CNNs/ manuscript source (compile with `tectonic manuscript.tex`)
-research_review/      planning and review notes for next steps (not part of the pipeline)
-```
+Tanni field-detection source attribution and license are preserved in `src/ann/TANNI_LICENSE.txt` and its source module. Other external datasets and model implementations retain their original terms.

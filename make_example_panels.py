@@ -50,7 +50,7 @@ PAPER_PANELS = [
 
 def location_hd_figure(rate_map, neuron, sigma=(1, 1, 4), clip_percentile=99):
     """rate_map: (nx, ny, n_hd, n_neurons). Smooths (HD circular), clips outliers, draws the 3-D panel."""
-    m = nan_aware_gaussian_filter(rate_map[:, :, :, neuron], sigma, circular_axes=(0, 0, 1))
+    m = nan_aware_gaussian_filter(rate_map[:, :, :, neuron], sigma, circular_axes=(2,))
     m = np.clip(m, None, float(np.nanpercentile(m, clip_percentile)))
     return plot_neuron_2d_3d(
         m[None], 0, axes_names=("X", "Y", "HD"), n_slices=4, z_spacing=1.0,

@@ -124,6 +124,7 @@ def xy_bayesian_decoding(
     posterior_all: List[np.ndarray] = []
 
     rate_tau_flat = (rate_map_xy * tau).reshape(Y * X, N)
+    valid_states = np.any(np.isfinite(rate_tau_flat), axis=1)
     if nan_to_zero:
         rate_tau_flat = np.nan_to_num(rate_tau_flat, nan=0.0)
 
@@ -135,6 +136,7 @@ def xy_bayesian_decoding(
         k = spike_counts[t]
         with np.errstate(divide='ignore', invalid='ignore'):
             log_like = np.nansum(k[None, :] * np.log(rate_tau_flat + eps) - rate_tau_flat, axis=1)
+        log_like[~valid_states] = -np.inf
 
         if np.all(~np.isfinite(log_like)):
             posterior_all.append(np.full((Y, X), np.nan))

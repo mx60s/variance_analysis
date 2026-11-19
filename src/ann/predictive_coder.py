@@ -371,7 +371,8 @@ class FFN(nn.Module):
 
 class PredictiveCoder(nn.Module):
     def __init__(
-        self, in_channels: int, out_channels: int, layers: List[int], seq_len: int
+        self, in_channels: int, out_channels: int, layers: List[int], seq_len: int,
+        *, causal_normalization: bool = False
     ) -> None:
         super().__init__()
         self.encoder = Encoder(in_channels, layers)
@@ -381,6 +382,9 @@ class PredictiveCoder(nn.Module):
         self.attention_2 = MultiHeadAttention(128, num_heads=8)
         self.ffn_2 = FFN(128, 128)
         self.mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
+        self.causal_normalization = causal_normalization
+        if causal_normalization:
+            self._replace_batch_norm(self)
         #self.position = PositionalEncoding(512, 0)
 
         for m in self.modules():
@@ -389,6 +393,22 @@ class PredictiveCoder(nn.Module):
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+
+    @staticmethod
+    def _replace_batch_norm(module):
+        # Training BN sees flattened B*L frames, allowing future frames to alter
+        # earlier predictions. GroupNorm acts independently on each frame.
+        for name, child in list(module.named_children()):
+            if isinstance(child, nn.BatchNorm2d):
+                setattr(module, name, nn.GroupNorm(1, child.num_features))
+            else:
+                PredictiveCoder._replace_batch_norm(child)
+
+    def _normalize_latents(self, f):
+        # Default exactly preserves existing checkpoint behavior. The causal
+        # option is a new architecture for retraining, not a checkpoint repair.
+        shape = f.shape[2:] if self.causal_normalization else f.shape[1:]
+        return F.layer_norm(f, shape)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, L, C, H, W = x.shape
@@ -401,20 +421,20 @@ class PredictiveCoder(nn.Module):
         residual = f
         f = self.attention_1(f, f, f, self.mask)[0]
         f = f + residual
-        f = F.layer_norm(f, f.shape[1:])
+        f = self._normalize_latents(f)
 
         residual = f
         f = self.ffn_1(f) + residual
-        f = F.layer_norm(f, f.shape[1:])
+        f = self._normalize_latents(f)
 
         residual = f
         f = self.attention_2(f, f, f, self.mask)[0]
         f = f + residual
-        f = F.layer_norm(f, f.shape[1:])
+        f = self._normalize_latents(f)
 
         residual = f
         f = self.ffn_2(f) + residual
-        f = F.layer_norm(f, f.shape[1:])
+        f = self._normalize_latents(f)
 
         f = f.reshape(B * L, f.shape[2], f.shape[3], f.shape[4])
 
@@ -438,11 +458,11 @@ class PredictiveCoder(nn.Module):
             residual = f
             f = self.attention_1(f, f, f, self.mask)[0]
             f = f + residual
-            f = F.layer_norm(f, f.shape[1:])
+            f = self._normalize_latents(f)
     
             residual = f
             f = self.ffn_1(f) + residual
-            f = F.layer_norm(f, f.shape[1:])
+            f = self._normalize_latents(f)
     
             if which == 1:
                 return f
@@ -450,11 +470,11 @@ class PredictiveCoder(nn.Module):
             residual = f
             f = self.attention_2(f, f, f, self.mask)[0]
             f = f + residual
-            f = F.layer_norm(f, f.shape[1:])
+            f = self._normalize_latents(f)
     
             residual = f
             f = self.ffn_2(f) + residual
-            f = F.layer_norm(f, f.shape[1:])
+            f = self._normalize_latents(f)
 
             return f
 

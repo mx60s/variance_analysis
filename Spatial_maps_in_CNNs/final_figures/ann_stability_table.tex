@@ -1,0 +1,21 @@
+\begin{table}[htbp]
+\centering\small\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrrr}
+\hline
+ & \multicolumn{3}{c}{Field criteria (primary)} & \multicolumn{3}{c}{With heading-group stability} \\
+Layer & Defined/selected & Location & HD & Defined/selected & Location & HD \\\hline
+Predictive conv1 & 5766/5770 & 0.88 & 0.91 & 934/934 & 0.88 & 0.88 \\
+Predictive down1 & 6903/6903 & 0.91 & 0.91 & 1361/1361 & 0.91 & 0.87 \\
+Predictive pre\_pred & 6713/6713 & 0.93 & 0.91 & 1235/1235 & 0.92 & 0.88 \\
+Predictive post\_pred & 6883/6883 & 0.93 & 0.91 & 1343/1343 & 0.93 & 0.89 \\
+ResNet layer1 & 7034/7566 & 0.92 & 0.90 & 1280/1397 & 0.91 & 0.91 \\
+ResNet layer3 & 5340/5340 & 0.91 & 0.93 & 774/774 & 0.91 & 0.93 \\
+ResNet layer4 & 2356/2356 & 0.90 & 0.94 & 342/342 & 0.89 & 0.94 \\
+ResNet avgpool & 1513/1513 & 0.86 & 0.89 & 365/365 & 0.86 & 0.88 \\
+Untrained ResNet avgpool & 1968/1968 & 0.86 & 0.78 & 258/258 & 0.87 & 0.76 \\
+VGG features.9 & 6441/6670 & 0.90 & 0.92 & 1128/1186 & 0.89 & 0.93 \\
+\hline
+\end{tabular}
+\caption{\textbf{Heading-group stability does not eliminate heading dependence in ANN place-classified units.} Both analyses use the same iterative field detector, size and peak thresholds, sampled units, and EV estimates. The supplementary selection additionally requires within-field correlation $r\geq0.3$ between maps averaged over two heading groups. Counts give defined EV ratios over all selected exclusive place-classified units (neither border nor HD); location and HD columns give median normalized conditional variances over defined ratios.}
+\label{tab:ann_stability}
+\end{table}

@@ -24,7 +24,7 @@ def plot_cell_type_pie(
         and whose values are index lists or arrays.
     threshold : float, default 0.01
         Minimum fractional prevalence (1 %=0.01) for a slice to be shown.
-        Rarer types are omitted from the chart.
+        Rarer types are pooled into a Rare types slice, preserving the denominator.
     explode_offset : float, default 0.1
         How far to 'explode' each slice.
     ax : matplotlib.axes.Axes or None
@@ -56,10 +56,13 @@ def plot_cell_type_pie(
     if total == 0:
         raise ValueError("No cells found – nothing to plot.")
 
-    labels, n_cells = zip(*[
-        (lbl, n) for lbl, n in counts.items()
-        if n / total >= threshold
-    ])
+    if not 0 <= threshold < 1:
+        raise ValueError("threshold must be in [0, 1)")
+    visible = [(lbl, n) for lbl, n in counts.items() if n > 0 and n / total >= threshold]
+    rare = sum(n for n in counts.values() if 0 < n / total < threshold)
+    if rare:
+        visible.append(("Rare types", rare))
+    labels, n_cells = zip(*visible)
 
     pastel = cm.Pastel1.colors
     colour_map = {
@@ -72,6 +75,7 @@ def plot_cell_type_pie(
         "P+B+D"          : pastel[6],
         "Active (no type)": pastel[7],
         "Inactive"       : "grey",
+        "Rare types"     : "#cccccc",
     }
     colours = [colour_map[lbl] for lbl in labels]
 
@@ -86,7 +90,7 @@ def plot_cell_type_pie(
         labels=labels,
         colors=colours,
         explode=explode,
-        autopct=lambda p: f"{p:.0f}%" if p >= 1 else "",
+        autopct=lambda p: f"{p:.1f}%" if p >= 1 else "<1%",
         textprops={"fontsize": 14},
     )
     ax.set_aspect("equal")  # keep it circular
@@ -146,7 +150,10 @@ def plot_neuron_2d_3d(
     data = activations[neuron_idx]
     nx, ny, nz = data.shape
 
-    slice_indices = np.linspace(0, nz - 1, n_slices + 1, dtype=int).tolist()
+    if not 1 <= n_slices <= nz:
+        raise ValueError("n_slices must be between 1 and the number of HD bins")
+    # Half-open intervals must end at nz so the last HD bin is included.
+    slice_indices = np.linspace(0, nz, n_slices + 1, dtype=int).tolist()
     slice_indices = sorted(set(slice_indices))
 
     def idx_to_deg(z_idx: int) -> float:
@@ -217,7 +224,9 @@ def plot_neuron_2d_3d(
         row=1, col=2
     )
     fig.update_xaxes(title_text=axes_names[0], row=1, col=2, showticklabels=False)
-    fig.update_yaxes(title_text=axes_names[1], row=1, col=2, showticklabels=False)
+    fig.update_yaxes(title_text=axes_names[1], row=1, col=2, showticklabels=False,
+                     scaleanchor="x", scaleratio=1, constrain="domain")
+    fig.update_xaxes(constrain="domain", row=1, col=2)
 
     start_idx = _max_cartesian_axis_index(fig.layout) + 1
     gap = 0.02
@@ -272,7 +281,14 @@ def plot_neuron_2d_3d(
             )
         )
 
-        #slice_centers.append((0.5 * (y0 + y1), z_idx))
+        label_txt = (
+            f"{360.0 * z_lo / nz:g}–{360.0 * z_hi / nz:g}°"
+            if z_label_degrees else f"{z_lo}–{z_hi - 1}"
+        )
+        fig.add_annotation(
+            x=-0.06, y=0.5, xref=xr + " domain", yref=yr + " domain",
+            text=label_txt, showarrow=False, xanchor="right", font=dict(size=11)
+        )
     '''
     label_x = xdom3[1] + 0.015
     for ymid, z_idx in slice_centers:

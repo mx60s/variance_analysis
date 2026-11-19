@@ -8,7 +8,8 @@ from scipy import ndimage
 
 '''
 Everything marked with _old is the Luo et al implementation.
-_new is mine, and fully implements the Tanni methodology for place cell classification.
+_new is an adapted, single-threshold field detector inspired by Tanni et al.
+It does not implement the upstream iterative field hierarchy.
 '''
 
 def _is_dead_neuron(heatmap):
@@ -39,7 +40,7 @@ def _compute_single_heatmap_border_scores_old(
         else:
             activations = activation_map[:, :db]
         bi = np.mean(activations)
-        wall_scores.append((bi - c) / (bi + c))
+        wall_scores.append((bi - c) / (bi + c) if bi + c > 0 else 0.0)
     return float(np.max(wall_scores))
 
 # border score method is the same
@@ -53,6 +54,8 @@ def _compute_single_heatmap_directional_scores_old(
     alphas = np.linspace(0, 2 * np.pi, num=num_bins, endpoint=False)
     betas = np.mean(activation_maps, axis=0)
     coords = np.stack([betas * np.cos(alphas), betas * np.sin(alphas)], axis=-1)
+    if np.sum(betas) <= 0:
+        return 0.0, np.zeros(num_bins)
     r_normed = np.sum(coords, axis=0) / np.sum(betas)
     mean_vector_length = float(np.linalg.norm(r_normed))
     return mean_vector_length, np.linalg.norm(coords, axis=-1)
@@ -72,7 +75,9 @@ def _compute_single_heatmap_fields_info_old(
     pixel_min_threshold: int,
     pixel_max_threshold: int,
 ):
-    heatmap_norm = (heatmap - np.min(heatmap)) / (np.max(heatmap) - np.min(heatmap))
+    if np.ptp(heatmap) == 0:
+        return tuple(np.array([0]) for _ in range(5))
+    heatmap_norm = (heatmap - np.min(heatmap)) / np.ptp(heatmap)
     heatmap_gray = (heatmap_norm * 255).astype(np.uint8)
     
     activity_thr = np.mean(heatmap_gray)
@@ -108,7 +113,7 @@ def _compute_single_heatmap_fields_info_old(
     )
 
 # --------------------------
-# supporting methods for the new, total Tanni place cell classification
+# supporting methods for the adapted place-field classification
 # --------------------------
 
 def _spatial_correlation(map_1, map_2, *, min_included_value=0.01, mask=None, min_bins=4):
@@ -124,11 +129,14 @@ def _spatial_correlation(map_1, map_2, *, min_included_value=0.01, mask=None, mi
     if np.count_nonzero(inc) < min_bins:
         return np.nan, np.nan
     from scipy.stats import pearsonr
-    return pearsonr(map_1[inc], map_2[inc])
+    a, b = map_1[inc], map_2[inc]
+    if np.ptp(a) == 0 or np.ptp(b) == 0:
+        return np.nan, np.nan
+    return pearsonr(a, b)
 
 
 def _compute_field_stability(field_ratemap, ratemap1, ratemap2, *, min_included_value, min_bins):
-    mask = ~np.isnan(field_ratemap)
+    mask = np.isfinite(field_ratemap) & (field_ratemap > 0)
     return _spatial_correlation(ratemap1, ratemap2, min_included_value=min_included_value, mask=mask, min_bins=min_bins)[0]
 
 
@@ -161,7 +169,7 @@ def _detect_fields(ratemap, stability_ratemaps, *, base_threshold, threshold_ste
     ratemap = ratemap.astype(float).copy()
     ratemap[np.isnan(ratemap)] = 0
     ratemap[ratemap < base_threshold] = 0
-    # iterative splitting
+    # One threshold only; iterative upstream detection is an explicit alternative.
     fields = _extract_subfields(ratemap, filter_kwargs=_primary_filter_kwargs)
     final_fields = []
     for field in fields:
@@ -182,8 +190,13 @@ def _compute_single_heatmap_fields_info_new(
     env_y_min: int,
     pixel_min_threshold: int,
     pixel_max_threshold: int,
+    field_method: str = "adapted",
 ):
-    heatmap = (heatmap - np.min(heatmap)) / (np.max(heatmap) - np.min(heatmap))
+    if not np.all(np.isfinite(heatmap)):
+        raise ValueError("Classification requires finite activations")
+    if np.ptp(heatmap) == 0:
+        return tuple(np.array([0]) for _ in range(5))
+    heatmap = (heatmap - np.min(heatmap)) / np.ptp(heatmap)
     
     # Split hd sequence into two halves for stability check
     split = heatmap.shape[1] // 2
@@ -200,28 +213,36 @@ def _compute_single_heatmap_fields_info_new(
 
     base_th = float(np.mean(totalmap))
     step = 0.1 * float(np.std(totalmap))
-    prim_kw = {'min_area_bins': 15, 'min_peak_value': np.max(totalmap) * 0.5}
+    prim_kw = {'min_area_bins': pixel_min_threshold, 'min_peak_value': np.max(totalmap) * 0.5}
     sec_kw = {
-        'max_relative_bins': 0.5,
+        'max_relative_bins': min(pixel_max_threshold / totalmap.size, 1.0),
         'min_stability': 0.3,
         'stability_kwargs': {'min_included_value': base_th / 2, 'min_bins': 9},
     }
-    fields = _detect_fields(
-        totalmap,
-        (ratemap1, ratemap2),
-        base_threshold=base_th,
-        threshold_step=step,
-        _primary_filter_kwargs=prim_kw,
-        _secondary_filter_kwargs=sec_kw,
-    )
+    if field_method in {"tanni_iterative", "tanni_iterative_no_stability"}:
+        if field_method == "tanni_iterative_no_stability":
+            sec_kw["min_stability"] = None
+        from .tanni_fields import detect_fields
+        fields = detect_fields(totalmap, (ratemap1, ratemap2), base_th, step, prim_kw, sec_kw)
+    elif field_method == "adapted":
+        fields = _detect_fields(
+            totalmap,
+            (ratemap1, ratemap2),
+            base_threshold=base_th,
+            threshold_step=step,
+            _primary_filter_kwargs=prim_kw,
+            _secondary_filter_kwargs=sec_kw,
+        )
+    else:
+        raise ValueError(f"Unknown field method: {field_method}")
     num_clusters = np.array([len(fields)])
     if len(fields) == 0:
         zeros = np.array([0])
         return num_clusters, zeros, zeros, zeros, zeros
-    num_pixels = np.array([np.count_nonzero(~np.isnan(f)) for f in fields])
+    num_pixels = np.array([np.count_nonzero(f > 0) for f in fields])
     max_vals = np.array([np.nanmax(f) for f in fields])
-    mean_vals = np.array([np.nanmean(f) for f in fields])
-    var_vals = np.array([np.nanvar(f) for f in fields])
+    mean_vals = np.array([np.mean(f[f > 0]) for f in fields])
+    var_vals = np.array([np.var(f[f > 0]) for f in fields])
     return (
         num_clusters, 
         num_pixels, 
