@@ -1,0 +1,7 @@
+Luo discrepancy audit, 2026-11-18
+
+Verified downloaded January 2024 manuscript, page 29 Fig S.6, against upstream saved paper figures. ResNet avg_pool rounded slices: P=1%, P+D=89%, D=10%. Our corresponding Torchvision avgpool: any-place 1862/2048=90.918%; exclusive-place 1341/2048=65.479%; any-HD 30/2048=1.465%. Difference is principally HD classification / conjunctive labels, not marginal place detection abundance.
+
+Recomputed raw Luo resultant-vector score from cached clean activations: identical class decisions in ResNet avgpool, ResNet layer1, VGG features.9. Using 24 near-uniform samples of the 90-angle bank yields 33/2048 HD instead of30 in avgpool, 35/8000 instead of9 in layer1,100/8000 instead of40 in VGG. This rules out baseline subtraction or angular sample count as an explanation of the huge discrepancy in these tested layers. It is not an exact rerender at 15deg.
+
+Input bank differs (Minecraft versus Unity laboratory), CNN checkpoints differ (Torchvision versus Keras), and image rendering/resizing differs. These remain unisolated causes, alongside potential upstream data/code provenance issues. No causal attribution to environment is established. Current extraction asserts frame-reported absolute yaw agreement at every location before reshape, and clean maps use zero-pitch samples. No manuscript/results edits made in this audit.
